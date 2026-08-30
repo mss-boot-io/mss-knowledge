@@ -85,6 +85,110 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/DependencyUnavailable'
+  /v1/knowledge-bases/{kb_id}/documents:
+    post:
+      operationId: uploadDocument
+      summary: Upload a TXT or Markdown document
+      description: |
+        Stores the immutable source object in S3 and creates a durable PostgreSQL
+        ingestion job. Processing is asynchronous. The first verifiable release
+        accepts the raw file body and requires X-File-Name.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kb_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: X-File-Name
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: X-Document-Title
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-External-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              format: binary
+          text/markdown:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '202':
+          description: The immutable source and durable ingestion job were accepted.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionSubmission'
+        '400':
+          $ref: '#/components/responses/InvalidArgument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          description: The media type is not supported by the v0.1 native parser.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /v1/ingestion-jobs/{job_id}:
+    get:
+      operationId: getIngestionJob
+      summary: Read an authorized ingestion job
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Current durable ingestion state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJobStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          description: The job does not exist or is not visible to the principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
 components:
   securitySchemes:
     bearerAuth:
@@ -163,6 +267,76 @@ components:
           type: string
         date:
           type: string
+    IngestionSubmission:
+      type: object
+      additionalProperties: false
+      required: [document_id, version_id, job_id, version_number, state, status_url]
+      properties:
+        document_id:
+          type: string
+        version_id:
+          type: string
+        job_id:
+          type: string
+        version_number:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          const: PENDING
+        status_url:
+          type: string
+    IngestionJobStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - knowledge_base_id
+        - document_id
+        - version_id
+        - kind
+        - state
+        - current_stage
+        - attempt
+        - max_attempts
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        knowledge_base_id:
+          type: string
+        document_id:
+          type: string
+        version_id:
+          type: string
+        kind:
+          type: string
+        state:
+          type: string
+          enum: [PENDING, RUNNING, RETRY_WAIT, SUCCEEDED, FAILED, CANCELLED]
+        current_stage:
+          type: string
+          enum: [RECEIVED, STORED, VALIDATING, PARSING, NORMALIZING, CHUNKING, EMBEDDING, INDEXING, VERIFYING, PUBLISHING, READY]
+        attempt:
+          type: integer
+          minimum: 0
+        max_attempts:
+          type: integer
+          minimum: 1
+        error_code:
+          type: string
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
     SearchRequest:
       type: object
       additionalProperties: false

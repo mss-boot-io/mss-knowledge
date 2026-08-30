@@ -14,6 +14,7 @@ import (
 
 	catalogapp "github.com/mss-boot-io/mss-knowledge/internal/app/catalog"
 	fetchapp "github.com/mss-boot-io/mss-knowledge/internal/app/fetch"
+	ingestionapp "github.com/mss-boot-io/mss-knowledge/internal/app/ingestion"
 	searchapp "github.com/mss-boot-io/mss-knowledge/internal/app/search"
 	"github.com/mss-boot-io/mss-knowledge/internal/buildinfo"
 	catalogdomain "github.com/mss-boot-io/mss-knowledge/internal/domain/catalog"
@@ -47,6 +48,12 @@ type CatalogUseCase interface {
 	List(ctx context.Context, principal searchdomain.Principal) ([]catalogdomain.KnowledgeBase, error)
 }
 
+// IngestionUseCase accepts documents and reports asynchronous job status.
+type IngestionUseCase interface {
+	Submit(ctx context.Context, principal searchdomain.Principal, request ingestionapp.SubmitRequest) (ingestionapp.Submission, error)
+	Status(ctx context.Context, principal searchdomain.Principal, jobID string) (ingestionapp.JobStatus, error)
+}
+
 // PrincipalResolver converts an authenticated HTTP request into an internal principal.
 type PrincipalResolver interface {
 	ResolvePrincipal(request *http.Request) (searchdomain.Principal, error)
@@ -70,6 +77,7 @@ type Options struct {
 	Search          SearchUseCase
 	Fetch           FetchUseCase
 	Catalog         CatalogUseCase
+	Ingestion       IngestionUseCase
 	Principals      PrincipalResolver
 	MCP             http.Handler
 	Readiness       []ReadinessProbe
@@ -85,6 +93,7 @@ type Server struct {
 	search          SearchUseCase
 	fetch           FetchUseCase
 	catalog         CatalogUseCase
+	ingestion       IngestionUseCase
 	principals      PrincipalResolver
 	mcp             http.Handler
 	readiness       []ReadinessProbe
@@ -110,6 +119,7 @@ func New(options Options) (*Server, error) {
 		search:          options.Search,
 		fetch:           options.Fetch,
 		catalog:         options.Catalog,
+		ingestion:       options.Ingestion,
 		principals:      options.Principals,
 		mcp:             options.MCP,
 		readiness:       append([]ReadinessProbe(nil), options.Readiness...),
@@ -124,6 +134,8 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("POST /v1/search", server.handleSearch)
 	mux.HandleFunc("GET /v1/chunks/{chunk_id}", server.handleFetch)
 	mux.HandleFunc("GET /v1/knowledge-bases", server.handleCatalog)
+	mux.HandleFunc("POST /v1/knowledge-bases/{kb_id}/documents", server.handleUpload)
+	mux.HandleFunc("GET /v1/ingestion-jobs/{job_id}", server.handleIngestionStatus)
 	if server.mcp != nil {
 		mux.Handle("/mcp", server.mcp)
 	}
@@ -248,6 +260,76 @@ func (s *Server) handleCatalog(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"knowledge_bases": items})
+}
+
+func (s *Server) handleUpload(writer http.ResponseWriter, request *http.Request) {
+	if s.ingestion == nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "Ingestion is not configured.", requestIDFrom(request.Context()), true)
+		return
+	}
+	principal, ok := s.resolvePrincipal(writer, request)
+	if !ok {
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, s.maxRequestBytes)
+	defer request.Body.Close()
+
+	result, err := s.ingestion.Submit(request.Context(), principal, ingestionapp.SubmitRequest{
+		KnowledgeBaseID: request.PathValue("kb_id"),
+		Filename:        request.Header.Get("X-File-Name"),
+		Title:           request.Header.Get("X-Document-Title"),
+		ExternalKey:     request.Header.Get("X-External-Key"),
+		MediaType:       request.Header.Get("Content-Type"),
+		Body:            request.Body,
+	})
+	if err != nil {
+		s.writeIngestionError(writer, request, err)
+		return
+	}
+	writer.Header().Set("Location", result.StatusURL)
+	writeJSON(writer, http.StatusAccepted, result)
+}
+
+func (s *Server) handleIngestionStatus(writer http.ResponseWriter, request *http.Request) {
+	if s.ingestion == nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "Ingestion is not configured.", requestIDFrom(request.Context()), true)
+		return
+	}
+	principal, ok := s.resolvePrincipal(writer, request)
+	if !ok {
+		return
+	}
+	result, err := s.ingestion.Status(request.Context(), principal, request.PathValue("job_id"))
+	if err != nil {
+		s.writeIngestionError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (s *Server) writeIngestionError(writer http.ResponseWriter, request *http.Request, err error) {
+	var maxBytesError *http.MaxBytesError
+	switch {
+	case errors.As(err, &maxBytesError):
+		writeAPIError(writer, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "The document exceeds the configured upload limit.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, ingestionapp.ErrPermissionDenied):
+		writeAPIError(writer, http.StatusForbidden, "PERMISSION_DENIED", "The requested operation is not permitted.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, ingestionapp.ErrUnsupportedMediaType):
+		writeAPIError(writer, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Only UTF-8 TXT and Markdown documents are supported by v0.1.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, ingestionapp.ErrUploadTooLarge):
+		writeAPIError(writer, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "The document exceeds the configured upload limit.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, ingestionapp.ErrInvalidUpload):
+		writeAPIError(writer, http.StatusBadRequest, "INVALID_ARGUMENT", "The document upload is invalid.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, ports.ErrNotFound):
+		writeAPIError(writer, http.StatusNotFound, "NOT_FOUND", "The requested ingestion resource was not found.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, context.DeadlineExceeded):
+		writeAPIError(writer, http.StatusGatewayTimeout, "DEPENDENCY_UNAVAILABLE", "The ingestion deadline was exceeded.", requestIDFrom(request.Context()), true)
+	case errors.Is(err, context.Canceled):
+		writeAPIError(writer, http.StatusRequestTimeout, "REQUEST_CANCELLED", "The request was cancelled.", requestIDFrom(request.Context()), true)
+	default:
+		s.logger.ErrorContext(request.Context(), "ingestion request failed", "error", err)
+		writeAPIError(writer, http.StatusInternalServerError, "INTERNAL", "The ingestion request failed.", requestIDFrom(request.Context()), true)
+	}
 }
 
 func (s *Server) resolvePrincipal(writer http.ResponseWriter, request *http.Request) (searchdomain.Principal, bool) {

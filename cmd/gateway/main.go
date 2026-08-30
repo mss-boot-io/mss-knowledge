@@ -13,8 +13,10 @@ import (
 	"github.com/mss-boot-io/mss-knowledge/internal/adapters/idgen"
 	postgresadapter "github.com/mss-boot-io/mss-knowledge/internal/adapters/postgres"
 	"github.com/mss-boot-io/mss-knowledge/internal/adapters/redissearch"
+	"github.com/mss-boot-io/mss-knowledge/internal/adapters/s3store"
 	catalogapp "github.com/mss-boot-io/mss-knowledge/internal/app/catalog"
 	fetchapp "github.com/mss-boot-io/mss-knowledge/internal/app/fetch"
+	ingestionapp "github.com/mss-boot-io/mss-knowledge/internal/app/ingestion"
 	searchapp "github.com/mss-boot-io/mss-knowledge/internal/app/search"
 	"github.com/mss-boot-io/mss-knowledge/internal/buildinfo"
 	"github.com/mss-boot-io/mss-knowledge/internal/config"
@@ -88,6 +90,20 @@ func run() error {
 	}
 	defer redisStore.Close()
 
+	objectStore, err := s3store.Open(rootContext, s3store.Config{
+		Endpoint:          cfg.S3.Endpoint,
+		Region:            cfg.S3.Region,
+		Bucket:            cfg.S3.Bucket,
+		AccessKeyID:       cfg.S3.AccessKeyID,
+		SecretAccessKey:   cfg.S3.SecretAccessKey,
+		SessionToken:      cfg.S3.SessionToken,
+		PathStyle:         cfg.S3.PathStyle,
+		RequireVersioning: cfg.S3.RequireVersioning,
+	})
+	if err != nil {
+		return fmt.Errorf("open S3 object store: %w", err)
+	}
+
 	ids := idgen.Random{}
 	searchService, err := searchapp.New(redisStore, postgres, postgres, ids, searchapp.Config{
 		MaxTopK:             cfg.Search.MaxTopK,
@@ -104,6 +120,29 @@ func run() error {
 	catalogService, err := catalogapp.New(postgres)
 	if err != nil {
 		return fmt.Errorf("create catalog service: %w", err)
+	}
+	ingestionService, err := ingestionapp.New(
+		postgres,
+		postgres,
+		objectStore,
+		postgres,
+		postgres,
+		ids,
+		ingestionapp.Config{
+			Bucket:   cfg.S3.Bucket,
+			MaxBytes: cfg.HTTP.MaxRequestBytes,
+			Profiles: ports.ProcessingProfileIDs{
+				Parser:    cfg.Processing.ParserProfileID,
+				Chunker:   cfg.Processing.ChunkerProfileID,
+				Embedding: cfg.Processing.EmbeddingProfileID,
+				Index:     cfg.Processing.IndexProfileID,
+			},
+			EmbeddingModel:     cfg.Embedding.Model,
+			EmbeddingDimension: cfg.Embedding.Dimension,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("create ingestion service: %w", err)
 	}
 
 	principalResolver, err := staticauth.New(staticauth.Config{
@@ -134,9 +173,10 @@ func run() error {
 		Search:          searchService,
 		Fetch:           fetchService,
 		Catalog:         catalogService,
+		Ingestion:       ingestionService,
 		Principals:      principalResolver,
 		MCP:             mcpHandler,
-		Readiness:       []httpapi.ReadinessProbe{postgres, redisStore},
+		Readiness:       []httpapi.ReadinessProbe{postgres, redisStore, objectStore},
 		IDs:             ids,
 		MaxRequestBytes: cfg.HTTP.MaxRequestBytes,
 	})

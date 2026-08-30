@@ -162,3 +162,81 @@ type JobRepository interface {
 	Save(ctx context.Context, job ingestion.Job) error
 	Check(ctx context.Context) error
 }
+
+// ProcessingProfileIDs selects the immutable processing configuration for an upload.
+type ProcessingProfileIDs struct {
+	Parser    string
+	Chunker   string
+	Embedding string
+	Index     string
+}
+
+// CreateUploadRequest records an immutable source object and schedules its ingestion.
+type CreateUploadRequest struct {
+	TenantID            string
+	PrincipalID         string
+	KnowledgeBaseID     string
+	DocumentID          string
+	VersionID           string
+	JobID               string
+	ExternalKey         string
+	Title               string
+	Filename            string
+	MediaType           string
+	SourceURI           string
+	Original            ObjectRef
+	Profiles            ProcessingProfileIDs
+	PipelineFingerprint string
+	CreatedAt           time.Time
+}
+
+// CreateUploadResult reports the durable identifiers assigned to an accepted upload.
+type CreateUploadResult struct {
+	DocumentID    string
+	VersionID     string
+	JobID         string
+	VersionNumber int64
+}
+
+// VersionInput is the durable source and processing configuration loaded by a worker.
+type VersionInput struct {
+	TenantID            string
+	KnowledgeBaseID     string
+	DocumentID          string
+	VersionID           string
+	Title               string
+	Filename            string
+	MediaType           string
+	DefaultLanguage     string
+	SourceURI           string
+	Original            ObjectRef
+	Profiles            ProcessingProfileIDs
+	PipelineFingerprint string
+}
+
+// StoredChunk is a PostgreSQL chunk-catalog record. The text remains in the S3 manifest.
+type StoredChunk struct {
+	Chunk         knowledge.Chunk
+	TextObjectKey string
+}
+
+// UploadRepository creates the control-plane records for one already-stored source object.
+type UploadRepository interface {
+	CreateUpload(ctx context.Context, request CreateUploadRequest) (CreateUploadResult, error)
+}
+
+// IngestionReader loads tenant-scoped work inputs and job state.
+type IngestionReader interface {
+	GetJob(ctx context.Context, tenantID string, jobID ingestion.JobID) (ingestion.Job, error)
+	LoadVersionInput(ctx context.Context, tenantID string, versionID string) (VersionInput, error)
+}
+
+// ChunkRepository replaces the durable chunk catalog for one immutable version.
+type ChunkRepository interface {
+	ReplaceVersionChunks(ctx context.Context, tenantID, versionID string, chunks []StoredChunk) error
+}
+
+// KnowledgeBaseWriteAuthorizer checks whether a principal may add documents to a knowledge base.
+type KnowledgeBaseWriteAuthorizer interface {
+	CanWriteKnowledgeBase(ctx context.Context, tenantID, principalID, knowledgeBaseID string) (bool, error)
+}

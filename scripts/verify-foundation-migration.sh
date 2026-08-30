@@ -4,19 +4,23 @@ set -eu
 : "${DATABASE_URL:?DATABASE_URL must be set}"
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-UP_MIGRATION="$ROOT_DIR/migrations/000001_foundation.up.sql"
-DOWN_MIGRATION="$ROOT_DIR/migrations/000001_foundation.down.sql"
+UP_FOUNDATION="$ROOT_DIR/migrations/000001_foundation.up.sql"
+UP_INGESTION="$ROOT_DIR/migrations/000002_ingestion_runtime.up.sql"
+DOWN_INGESTION="$ROOT_DIR/migrations/000002_ingestion_runtime.down.sql"
+DOWN_FOUNDATION="$ROOT_DIR/migrations/000001_foundation.down.sql"
 
 psql_exec() {
     psql -X "$DATABASE_URL" --set ON_ERROR_STOP=1 "$@"
 }
 
 cleanup() {
-    psql_exec --file "$DOWN_MIGRATION" >/dev/null 2>&1 || true
+    psql_exec --file "$DOWN_INGESTION" >/dev/null 2>&1 || true
+    psql_exec --file "$DOWN_FOUNDATION" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-psql_exec --file "$UP_MIGRATION"
+psql_exec --file "$UP_FOUNDATION"
+psql_exec --file "$UP_INGESTION"
 
 expected_tables=16
 actual_tables=$(psql_exec --tuples-only --no-align --command "
@@ -68,7 +72,24 @@ if [ "$claim_index" -ne 1 ]; then
     exit 1
 fi
 
-psql_exec --file "$DOWN_MIGRATION"
+runtime_columns=$(psql_exec --tuples-only --no-align --command "
+SELECT count(*)
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'document_versions'
+  AND column_name IN (
+    'normalized_object_version_id',
+    'normalized_sha256',
+    'manifest_object_version_id'
+  );")
+
+if [ "$runtime_columns" -ne 3 ]; then
+    echo "ingestion runtime migration did not create all required columns" >&2
+    exit 1
+fi
+
+psql_exec --file "$DOWN_INGESTION"
+psql_exec --file "$DOWN_FOUNDATION"
 trap - EXIT INT TERM
 
 remaining_tables=$(psql_exec --tuples-only --no-align --command "
@@ -81,4 +102,4 @@ if [ "$remaining_tables" -ne 0 ]; then
     exit 1
 fi
 
-echo "foundation migration up/down verification passed"
+echo "foundation and ingestion runtime migration up/down verification passed"

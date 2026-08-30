@@ -162,6 +162,14 @@ func TestValidateGatewayRequiresDependenciesAndAuthentication(t *testing.T) {
 	cfg.Auth.StaticToken = "token"
 	cfg.Auth.TenantID = "tenant_1"
 	cfg.Auth.PrincipalID = "principal_1"
+	cfg.S3 = S3Config{
+		Endpoint:          "http://127.0.0.1:9000",
+		Bucket:            "mss-knowledge",
+		AccessKeyID:       "access-key",
+		SecretAccessKey:   "secret-key",
+		PathStyle:         true,
+		RequireVersioning: true,
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mss-boot-io/mss-knowledge/internal/foundation"
 )
 
 // Environment identifies the runtime environment.
@@ -29,6 +31,7 @@ type Config struct {
 	S3              S3Config
 	Auth            AuthConfig
 	Embedding       EmbeddingConfig
+	Processing      ProcessingConfig
 	Search          SearchConfig
 	Worker          WorkerConfig
 	ShutdownTimeout time.Duration
@@ -91,6 +94,18 @@ type EmbeddingConfig struct {
 	Dimension int
 }
 
+// ProcessingConfig selects the built-in v0.1 parser, chunker, embedding, and index profiles.
+type ProcessingConfig struct {
+	ParserProfileID    string
+	ChunkerProfileID   string
+	EmbeddingProfileID string
+	IndexProfileID     string
+	ChunkTargetTokens  int
+	ChunkMinimumTokens int
+	ChunkMaximumTokens int
+	ChunkOverlapTokens int
+}
+
 // SearchConfig controls bounded result generation.
 type SearchConfig struct {
 	MaxTopK             int
@@ -147,6 +162,16 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 			Model:     "deterministic-hash-v1",
 			Dimension: 128,
 		},
+		Processing: ProcessingConfig{
+			ParserProfileID:    foundation.ParserProfileID,
+			ChunkerProfileID:   foundation.ChunkerProfileID,
+			EmbeddingProfileID: foundation.EmbeddingProfileID,
+			IndexProfileID:     foundation.IndexProfileID,
+			ChunkTargetTokens:  512,
+			ChunkMinimumTokens: 128,
+			ChunkMaximumTokens: 900,
+			ChunkOverlapTokens: 80,
+		},
 		Search: SearchConfig{
 			MaxTopK:             20,
 			CandidateMultiplier: 5,
@@ -183,6 +208,10 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	cfg.Auth.Scopes = csvValue(lookup, "MSS_KNOWLEDGE_STATIC_SCOPES", cfg.Auth.Scopes)
 	cfg.Embedding.Provider = strings.ToLower(stringValue(lookup, "MSS_KNOWLEDGE_EMBEDDING_PROVIDER", cfg.Embedding.Provider))
 	cfg.Embedding.Model = stringValue(lookup, "MSS_KNOWLEDGE_EMBEDDING_MODEL", cfg.Embedding.Model)
+	cfg.Processing.ParserProfileID = stringValue(lookup, "MSS_KNOWLEDGE_PARSER_PROFILE_ID", cfg.Processing.ParserProfileID)
+	cfg.Processing.ChunkerProfileID = stringValue(lookup, "MSS_KNOWLEDGE_CHUNKER_PROFILE_ID", cfg.Processing.ChunkerProfileID)
+	cfg.Processing.EmbeddingProfileID = stringValue(lookup, "MSS_KNOWLEDGE_EMBEDDING_PROFILE_ID", cfg.Processing.EmbeddingProfileID)
+	cfg.Processing.IndexProfileID = stringValue(lookup, "MSS_KNOWLEDGE_INDEX_PROFILE_ID", cfg.Processing.IndexProfileID)
 
 	var err error
 	if cfg.HTTP.ReadHeaderTimeout, err = durationValue(lookup, "MSS_KNOWLEDGE_HTTP_READ_HEADER_TIMEOUT", cfg.HTTP.ReadHeaderTimeout); err != nil {
@@ -228,6 +257,18 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Embedding.Dimension, err = intValue(lookup, "MSS_KNOWLEDGE_EMBEDDING_DIMENSION", cfg.Embedding.Dimension); err != nil {
+		return Config{}, err
+	}
+	if cfg.Processing.ChunkTargetTokens, err = intValue(lookup, "MSS_KNOWLEDGE_CHUNK_TARGET_TOKENS", cfg.Processing.ChunkTargetTokens); err != nil {
+		return Config{}, err
+	}
+	if cfg.Processing.ChunkMinimumTokens, err = intValue(lookup, "MSS_KNOWLEDGE_CHUNK_MINIMUM_TOKENS", cfg.Processing.ChunkMinimumTokens); err != nil {
+		return Config{}, err
+	}
+	if cfg.Processing.ChunkMaximumTokens, err = intValue(lookup, "MSS_KNOWLEDGE_CHUNK_MAXIMUM_TOKENS", cfg.Processing.ChunkMaximumTokens); err != nil {
+		return Config{}, err
+	}
+	if cfg.Processing.ChunkOverlapTokens, err = intValue(lookup, "MSS_KNOWLEDGE_CHUNK_OVERLAP_TOKENS", cfg.Processing.ChunkOverlapTokens); err != nil {
 		return Config{}, err
 	}
 	if cfg.Search.MaxTopK, err = intValue(lookup, "MSS_KNOWLEDGE_SEARCH_MAX_TOP_K", cfg.Search.MaxTopK); err != nil {
@@ -294,6 +335,16 @@ func (c Config) Validate() error {
 	if c.Embedding.Provider != "deterministic" {
 		return fmt.Errorf("unsupported embedding provider %q", c.Embedding.Provider)
 	}
+	if strings.TrimSpace(c.Processing.ParserProfileID) == "" || strings.TrimSpace(c.Processing.ChunkerProfileID) == "" ||
+		strings.TrimSpace(c.Processing.EmbeddingProfileID) == "" || strings.TrimSpace(c.Processing.IndexProfileID) == "" {
+		return fmt.Errorf("processing profile IDs must not be empty")
+	}
+	if c.Processing.ChunkMinimumTokens < 0 || c.Processing.ChunkTargetTokens <= 0 || c.Processing.ChunkMaximumTokens <= 0 ||
+		c.Processing.ChunkMinimumTokens > c.Processing.ChunkTargetTokens ||
+		c.Processing.ChunkTargetTokens > c.Processing.ChunkMaximumTokens ||
+		c.Processing.ChunkOverlapTokens < 0 || c.Processing.ChunkOverlapTokens >= c.Processing.ChunkMaximumTokens {
+		return fmt.Errorf("chunk processing bounds are invalid")
+	}
 	if c.Search.MaxTopK <= 0 || c.Search.MaxTopK > 100 || c.Search.CandidateMultiplier <= 0 || c.Search.CandidateMultiplier > 20 || c.Search.MaxHitsPerDocument <= 0 {
 		return fmt.Errorf("search bounds are invalid")
 	}
@@ -339,6 +390,23 @@ func (c Config) ValidateGateway() error {
 	}
 	if c.Auth.Mode == "disabled" {
 		return fmt.Errorf("authentication must be configured")
+	}
+	if err := c.ValidateObjectStorage(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateWorker checks dependencies required by the ingestion worker.
+func (c Config) ValidateWorker() error {
+	if strings.TrimSpace(c.Database.URL) == "" {
+		return fmt.Errorf("MSS_KNOWLEDGE_DATABASE_URL is required")
+	}
+	if strings.TrimSpace(c.Redis.Address) == "" {
+		return fmt.Errorf("MSS_KNOWLEDGE_REDIS_ADDRESS is required")
+	}
+	if err := c.ValidateObjectStorage(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	ingestionapp "github.com/mss-boot-io/mss-knowledge/internal/app/ingestion"
 	"github.com/mss-boot-io/mss-knowledge/internal/buildinfo"
 	searchdomain "github.com/mss-boot-io/mss-knowledge/internal/domain/search"
 )
@@ -39,6 +41,39 @@ func (f *fakeSearchUseCase) Search(
 ) (searchdomain.Response, error) {
 	f.request = request
 	return f.response, f.err
+}
+
+type fakeIngestionUseCase struct {
+	submission ingestionapp.Submission
+	status     ingestionapp.JobStatus
+	err        error
+	request    ingestionapp.SubmitRequest
+	body       []byte
+}
+
+func (f *fakeIngestionUseCase) Submit(
+	_ context.Context,
+	_ searchdomain.Principal,
+	request ingestionapp.SubmitRequest,
+) (ingestionapp.Submission, error) {
+	f.request = request
+	content, err := io.ReadAll(request.Body)
+	if err != nil {
+		return ingestionapp.Submission{}, err
+	}
+	f.body = content
+	if f.err != nil {
+		return ingestionapp.Submission{}, f.err
+	}
+	return f.submission, nil
+}
+
+func (f *fakeIngestionUseCase) Status(
+	context.Context,
+	searchdomain.Principal,
+	string,
+) (ingestionapp.JobStatus, error) {
+	return f.status, f.err
 }
 
 func newTestServer(t *testing.T, search SearchUseCase, principals PrincipalResolver, maxBytes int64) *Server {
@@ -168,6 +203,64 @@ func TestSearchMapsApplicationPermissionError(t *testing.T) {
 	server.Handler().ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUploadAcceptsRawMarkdown(t *testing.T) {
+	useCase := &fakeIngestionUseCase{submission: ingestionapp.Submission{
+		DocumentID: "doc_1", VersionID: "ver_1", JobID: "job_1", VersionNumber: 1,
+		State: "PENDING", StatusURL: "/v1/ingestion-jobs/job_1",
+	}}
+	server, err := New(Options{
+		Ingestion: useCase,
+		Principals: staticPrincipalResolver{principal: searchdomain.Principal{
+			TenantID: "tenant_1", PrincipalID: "principal_1",
+		}},
+		IDs: fixedIDGenerator{}, MaxRequestBytes: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/knowledge-bases/kb_1/documents", strings.NewReader("# Design\n\nRedis context."))
+	request.Header.Set("Content-Type", "text/markdown; charset=utf-8")
+	request.Header.Set("X-File-Name", "design.md")
+	request.Header.Set("X-Document-Title", "Design")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Location") != "/v1/ingestion-jobs/job_1" {
+		t.Fatalf("Location = %q", recorder.Header().Get("Location"))
+	}
+	if useCase.request.KnowledgeBaseID != "kb_1" || useCase.request.Filename != "design.md" || string(useCase.body) != "# Design\n\nRedis context." {
+		t.Fatalf("upload request = %+v, body = %q", useCase.request, useCase.body)
+	}
+}
+
+func TestUploadRejectsOversizedBody(t *testing.T) {
+	useCase := &fakeIngestionUseCase{}
+	server, err := New(Options{
+		Ingestion: useCase,
+		Principals: staticPrincipalResolver{principal: searchdomain.Principal{
+			TenantID: "tenant_1", PrincipalID: "principal_1",
+		}},
+		IDs: fixedIDGenerator{}, MaxRequestBytes: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/knowledge-bases/kb_1/documents", strings.NewReader("this body is larger than eight bytes"))
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("X-File-Name", "large.txt")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
