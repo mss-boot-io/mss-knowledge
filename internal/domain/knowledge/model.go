@@ -26,14 +26,14 @@ var ErrInvalidDocument = errors.New("invalid knowledge document")
 
 // Document is the parser-independent normalized representation stored in S3.
 type Document struct {
-	SchemaVersion  string   `json:"schema_version"`
+	SchemaVersion   string   `json:"schema_version"`
 	KnowledgeBaseID string   `json:"knowledge_base_id"`
-	DocumentID     string   `json:"document_id"`
-	VersionID      string   `json:"version_id"`
-	Title          string   `json:"title"`
-	Language       string   `json:"language,omitempty"`
-	Metadata       Metadata `json:"metadata"`
-	Blocks         []Block  `json:"blocks"`
+	DocumentID      string   `json:"document_id"`
+	VersionID       string   `json:"version_id"`
+	Title           string   `json:"title"`
+	Language        string   `json:"language,omitempty"`
+	Metadata        Metadata `json:"metadata"`
+	Blocks          []Block  `json:"blocks"`
 }
 
 // Metadata identifies the immutable source and parser output.
