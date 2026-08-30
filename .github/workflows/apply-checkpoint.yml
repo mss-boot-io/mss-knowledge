@@ -52,7 +52,7 @@ jobs:
           test -s /tmp/mss-knowledge-change.patch
 
           git apply --check --whitespace=error /tmp/mss-knowledge-change.patch
-          git apply --index --whitespace=fix /tmp/mss-knowledge-change.patch
+          git apply --whitespace=fix /tmp/mss-knowledge-change.patch
 
           mapfile -t go_files < <(find . -type f -name '*.go' -not -path './vendor/*' -print | sort)
           if (( ${#go_files[@]} > 0 )); then
