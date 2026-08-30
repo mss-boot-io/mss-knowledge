@@ -41,6 +41,9 @@ func main() {}
 	if document.Title != "MSS Knowledge" {
 		t.Fatalf("Title = %q", document.Title)
 	}
+	if document.KnowledgeBaseID != "kb_1" {
+		t.Fatalf("KnowledgeBaseID = %q", document.KnowledgeBaseID)
+	}
 	if document.Metadata.Filename != "design.md" || document.Metadata.MediaType != "text/markdown" {
 		t.Fatalf("unexpected metadata: %+v", document.Metadata)
 	}
@@ -207,12 +210,13 @@ func validInput(content string) ports.ParseInput {
 			SHA256:    strings.Repeat("a", 64),
 			MediaType: "text/markdown",
 		},
-		Body:       strings.NewReader(content),
-		Filename:   "document.md",
-		MediaType:  "text/markdown",
-		SourceType: "upload",
-		SourceURI:  "s3://knowledge/tenants/tenant_1/document.md?versionId=object-version-1",
-		DocumentID: "doc_1",
-		VersionID:  "ver_1",
+		Body:            strings.NewReader(content),
+		Filename:        "document.md",
+		MediaType:       "text/markdown",
+		SourceType:      "upload",
+		SourceURI:       "s3://knowledge/tenants/tenant_1/document.md?versionId=object-version-1",
+		KnowledgeBaseID: "kb_1",
+		DocumentID:      "doc_1",
+		VersionID:       "ver_1",
 	}
 }
