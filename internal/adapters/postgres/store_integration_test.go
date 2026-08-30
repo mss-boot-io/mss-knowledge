@@ -167,8 +167,8 @@ INSERT INTO documents (id, tenant_id, kb_id, external_key, title, status, create
 VALUES
     ('doc_1', 'tenant_1', 'kb_1', 'doc-1', 'Ready document', 'active', 'principal_1'),
     ('doc_2', 'tenant_1', 'kb_1', 'doc-2', 'Processing document', 'active', 'principal_1'),
-    ('doc_3', 'tenant_1', 'kb_3', 'Disabled KB document', 'active', 'principal_1'),
-    ('doc_4', 'tenant_2', 'kb_4', 'Other tenant document', 'active', 'principal_2')`)
+    ('doc_3', 'tenant_1', 'kb_3', 'doc-3', 'Disabled KB document', 'active', 'principal_1'),
+    ('doc_4', 'tenant_2', 'kb_4', 'doc-4', 'Other tenant document', 'active', 'principal_2')`)
 
 	insertVersion := func(id, tenantID, knowledgeBaseID, documentID, status, hashCharacter, creator string) {
 		t.Helper()
