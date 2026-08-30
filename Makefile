@@ -27,8 +27,13 @@ fmt:
 	$(GO)fmt -w $(GO_FILES)
 
 fmt-check:
-	@test -z "$$($(GO)fmt -l $(GO_FILES))" || \
-		{ echo 'Go files require formatting:'; $(GO)fmt -l $(GO_FILES); exit 1; }
+	@unformatted="$$($(GO)fmt -l $(GO_FILES))"; \
+	if [ -n "$$unformatted" ]; then \
+		echo 'Go files require formatting:'; \
+		echo "$$unformatted"; \
+		$(GO)fmt -d $$unformatted; \
+		exit 1; \
+	fi
 
 vet:
 	$(GO) vet ./...
