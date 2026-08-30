@@ -45,10 +45,12 @@ jobs:
           message=$(head -n 1 .checkpoint/message.txt | tr -d '\r')
           test -n "$message"
 
-          : > /tmp/mss-knowledge-change.patch
-          while IFS= read -r part; do
-            base64 --decode "$part" | gzip -dc >> /tmp/mss-knowledge-change.patch
-          done < <(find .checkpoint/parts -maxdepth 1 -type f -name '*.v2.patch.gz.b64' -print | sort)
+          mapfile -t parts < <(find .checkpoint/parts -maxdepth 1 -type f -name '*.v2.patch.gz.b64' -print | sort)
+          (( ${#parts[@]} > 0 ))
+          cat "${parts[@]}" \
+            | tr -d '\r\n\t ' \
+            | base64 --decode \
+            | gzip -dc > /tmp/mss-knowledge-change.patch
           test -s /tmp/mss-knowledge-change.patch
 
           git apply --check --whitespace=error /tmp/mss-knowledge-change.patch
@@ -63,9 +65,12 @@ jobs:
           go mod tidy
           git add go.mod go.sum
 
-          # GitHub Actions' GITHUB_TOKEN cannot update workflow files. The CI
-          # workflow is applied separately through the connected GitHub app.
-          git restore --source=HEAD --staged --worktree .github/workflows/ci.yml
+          # GitHub Actions' GITHUB_TOKEN cannot update workflow files. Workflow
+          # changes are applied separately through the connected GitHub app.
+          mapfile -t changed_workflows < <(git diff --name-only -- .github/workflows)
+          if (( ${#changed_workflows[@]} > 0 )); then
+            git restore --source=HEAD --staged --worktree -- "${changed_workflows[@]}"
+          fi
 
           rm -rf .checkpoint/parts .checkpoint/message.txt .checkpoint/READY
           git add -A
