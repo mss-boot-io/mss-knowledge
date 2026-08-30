@@ -1,0 +1,63 @@
+name: apply-checkpoint
+
+on:
+  push:
+    branches:
+      - codex/mss-knowledge-foundation
+    paths:
+      - .checkpoint/READY
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-checkpoint-codex-mss-knowledge-foundation
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.repository == 'mss-boot-io/mss-knowledge' &&
+      github.actor == 'SullivanPrime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@v7
+        with:
+          ref: codex/mss-knowledge-foundation
+          fetch-depth: 0
+
+      - name: Apply and verify checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .checkpoint/message.txt
+          test -d .checkpoint/parts
+          find .checkpoint/parts -maxdepth 1 -type f -name '*.patch' -print -quit | grep -q .
+
+          cat .checkpoint/parts/*.patch > /tmp/mss-knowledge-change.patch
+          git apply --check --whitespace=error /tmp/mss-knowledge-change.patch
+          git apply --index --whitespace=fix /tmp/mss-knowledge-change.patch
+
+          mapfile -t go_files < <(find . -type f -name '*.go' -not -path './vendor/*' -print | sort)
+          if (( ${#go_files[@]} > 0 )); then
+            gofmt -w "${go_files[@]}"
+            git add -- "${go_files[@]}"
+          fi
+
+          rm -rf .checkpoint/parts .checkpoint/message.txt .checkpoint/READY
+          git add -A
+          git diff --cached --check
+
+          message=$(head -n 1 .checkpoint-message.tmp 2>/dev/null || true)
+          if [[ -z "$message" ]]; then
+            message=$(head -n 1 <(git show HEAD:.checkpoint/message.txt) | tr -d '\r')
+          fi
+          test -n "$message"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "$message"
+          git push origin HEAD:codex/mss-knowledge-foundation
