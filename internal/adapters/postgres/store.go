@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mss-boot-io/mss-knowledge/internal/domain/catalog"
 	searchdomain "github.com/mss-boot-io/mss-knowledge/internal/domain/search"
 )
 
@@ -165,6 +166,63 @@ ORDER BY kb.id`,
 		return nil, fmt.Errorf("iterate allowed knowledge bases: %w", err)
 	}
 	return knowledgeBaseIDs, nil
+}
+
+// ListKnowledgeBases returns the authorization-filtered catalog visible to a principal.
+func (s *Store) ListKnowledgeBases(
+	ctx context.Context,
+	principal searchdomain.Principal,
+) ([]catalog.KnowledgeBase, error) {
+	if err := validatePrincipal(principal); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT kb.id, kb.slug, kb.name, kb.description, kb.revision, kb.default_language, kb.updated_at
+FROM knowledge_bases AS kb
+JOIN kb_acl_bindings AS acl
+  ON acl.tenant_id = kb.tenant_id
+ AND acl.kb_id = kb.id
+JOIN principals AS principal
+  ON principal.tenant_id = kb.tenant_id
+ AND principal.id = acl.principal_id
+WHERE kb.tenant_id = $1
+  AND principal.id = $2
+  AND principal.status = 'active'
+  AND principal.deleted_at IS NULL
+  AND kb.status = 'active'
+  AND kb.deleted_at IS NULL
+  AND acl.revoked_at IS NULL
+  AND (
+      acl.role IN ('owner', 'admin', 'editor', 'reader', 'agent')
+      OR acl.permissions_json ? 'knowledge.search'
+  )
+ORDER BY kb.name, kb.id`, principal.TenantID, principal.PrincipalID)
+	if err != nil {
+		return nil, fmt.Errorf("query knowledge-base catalog: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]catalog.KnowledgeBase, 0)
+	for rows.Next() {
+		var item catalog.KnowledgeBase
+		if err := rows.Scan(
+			&item.ID,
+			&item.Slug,
+			&item.Name,
+			&item.Description,
+			&item.Revision,
+			&item.DefaultLanguage,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan knowledge-base catalog: %w", err)
+		}
+		item.UpdatedAt = item.UpdatedAt.UTC()
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate knowledge-base catalog: %w", err)
+	}
+	return result, nil
 }
 
 // CanReadHit revalidates the final hit against current PostgreSQL ACL state.

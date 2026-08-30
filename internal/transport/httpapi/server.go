@@ -12,9 +12,13 @@ import (
 	"strings"
 	"time"
 
+	catalogapp "github.com/mss-boot-io/mss-knowledge/internal/app/catalog"
+	fetchapp "github.com/mss-boot-io/mss-knowledge/internal/app/fetch"
 	searchapp "github.com/mss-boot-io/mss-knowledge/internal/app/search"
 	"github.com/mss-boot-io/mss-knowledge/internal/buildinfo"
+	catalogdomain "github.com/mss-boot-io/mss-knowledge/internal/domain/catalog"
 	searchdomain "github.com/mss-boot-io/mss-knowledge/internal/domain/search"
+	"github.com/mss-boot-io/mss-knowledge/internal/ports"
 )
 
 var (
@@ -31,6 +35,16 @@ type SearchUseCase interface {
 		principal searchdomain.Principal,
 		request searchdomain.Request,
 	) (searchdomain.Response, error)
+}
+
+// FetchUseCase retrieves one active, authorized chunk.
+type FetchUseCase interface {
+	Fetch(ctx context.Context, principal searchdomain.Principal, chunkID string) (searchdomain.Hit, error)
+}
+
+// CatalogUseCase lists authorization-filtered knowledge bases.
+type CatalogUseCase interface {
+	List(ctx context.Context, principal searchdomain.Principal) ([]catalogdomain.KnowledgeBase, error)
 }
 
 // PrincipalResolver converts an authenticated HTTP request into an internal principal.
@@ -54,7 +68,10 @@ type Options struct {
 	Logger          *slog.Logger
 	Build           buildinfo.Info
 	Search          SearchUseCase
+	Fetch           FetchUseCase
+	Catalog         CatalogUseCase
 	Principals      PrincipalResolver
+	MCP             http.Handler
 	Readiness       []ReadinessProbe
 	IDs             RequestIDGenerator
 	MaxRequestBytes int64
@@ -66,7 +83,10 @@ type Server struct {
 	logger          *slog.Logger
 	build           buildinfo.Info
 	search          SearchUseCase
+	fetch           FetchUseCase
+	catalog         CatalogUseCase
 	principals      PrincipalResolver
+	mcp             http.Handler
 	readiness       []ReadinessProbe
 	ids             RequestIDGenerator
 	maxRequestBytes int64
@@ -88,7 +108,10 @@ func New(options Options) (*Server, error) {
 		logger:          options.Logger,
 		build:           options.Build,
 		search:          options.Search,
+		fetch:           options.Fetch,
+		catalog:         options.Catalog,
 		principals:      options.Principals,
+		mcp:             options.MCP,
 		readiness:       append([]ReadinessProbe(nil), options.Readiness...),
 		ids:             options.IDs,
 		maxRequestBytes: options.MaxRequestBytes,
@@ -99,6 +122,11 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("GET /readyz", server.handleReadiness)
 	mux.HandleFunc("GET /version", server.handleVersion)
 	mux.HandleFunc("POST /v1/search", server.handleSearch)
+	mux.HandleFunc("GET /v1/chunks/{chunk_id}", server.handleFetch)
+	mux.HandleFunc("GET /v1/knowledge-bases", server.handleCatalog)
+	if server.mcp != nil {
+		mux.Handle("/mcp", server.mcp)
+	}
 	server.handler = server.recoverPanic(server.accessLog(server.requestID(mux)))
 	return server, nil
 }
@@ -155,11 +183,6 @@ func (s *Server) handleSearch(writer http.ResponseWriter, request *http.Request)
 		writeAPIError(writer, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "Search is not configured.", requestIDFrom(request.Context()), true)
 		return
 	}
-	if s.principals == nil {
-		writeAPIError(writer, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication is required.", requestIDFrom(request.Context()), false)
-		return
-	}
-
 	request.Body = http.MaxBytesReader(writer, request.Body, s.maxRequestBytes)
 	defer request.Body.Close()
 
@@ -175,14 +198,8 @@ func (s *Server) handleSearch(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 
-	principal, err := s.principals.ResolvePrincipal(request)
-	if err != nil {
-		if errors.Is(err, ErrUnauthenticated) {
-			writeAPIError(writer, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication is required.", requestIDFrom(request.Context()), false)
-			return
-		}
-		s.logger.ErrorContext(request.Context(), "resolve principal", "error", err)
-		writeAPIError(writer, http.StatusInternalServerError, "INTERNAL", "The request could not be authenticated.", requestIDFrom(request.Context()), false)
+	principal, ok := s.resolvePrincipal(writer, request)
+	if !ok {
 		return
 	}
 
@@ -192,6 +209,80 @@ func (s *Server) handleSearch(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusOK, response)
+}
+
+func (s *Server) handleFetch(writer http.ResponseWriter, request *http.Request) {
+	if s.fetch == nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "Fetch is not configured.", requestIDFrom(request.Context()), true)
+		return
+	}
+	principal, ok := s.resolvePrincipal(writer, request)
+	if !ok {
+		return
+	}
+	hit, err := s.fetch.Fetch(request.Context(), principal, request.PathValue("chunk_id"))
+	if err != nil {
+		s.writeFetchError(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, hit)
+}
+
+func (s *Server) handleCatalog(writer http.ResponseWriter, request *http.Request) {
+	if s.catalog == nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE", "Catalog is not configured.", requestIDFrom(request.Context()), true)
+		return
+	}
+	principal, ok := s.resolvePrincipal(writer, request)
+	if !ok {
+		return
+	}
+	items, err := s.catalog.List(request.Context(), principal)
+	if err != nil {
+		if errors.Is(err, catalogapp.ErrPermissionDenied) {
+			writeAPIError(writer, http.StatusForbidden, "PERMISSION_DENIED", "The requested operation is not permitted.", requestIDFrom(request.Context()), false)
+			return
+		}
+		s.logger.ErrorContext(request.Context(), "list knowledge bases", "error", err)
+		writeAPIError(writer, http.StatusInternalServerError, "INTERNAL", "The knowledge-base catalog could not be read.", requestIDFrom(request.Context()), true)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"knowledge_bases": items})
+}
+
+func (s *Server) resolvePrincipal(writer http.ResponseWriter, request *http.Request) (searchdomain.Principal, bool) {
+	if s.principals == nil {
+		writeAPIError(writer, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication is required.", requestIDFrom(request.Context()), false)
+		return searchdomain.Principal{}, false
+	}
+	principal, err := s.principals.ResolvePrincipal(request)
+	if err != nil {
+		if errors.Is(err, ErrUnauthenticated) {
+			writer.Header().Set("WWW-Authenticate", `Bearer realm="mss-knowledge"`)
+			writeAPIError(writer, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication is required.", requestIDFrom(request.Context()), false)
+			return searchdomain.Principal{}, false
+		}
+		s.logger.ErrorContext(request.Context(), "resolve principal", "error", err)
+		writeAPIError(writer, http.StatusInternalServerError, "INTERNAL", "The request could not be authenticated.", requestIDFrom(request.Context()), false)
+		return searchdomain.Principal{}, false
+	}
+	return principal, true
+}
+
+func (s *Server) writeFetchError(writer http.ResponseWriter, request *http.Request, err error) {
+	switch {
+	case errors.Is(err, ports.ErrNotFound):
+		writeAPIError(writer, http.StatusNotFound, "NOT_FOUND", "The requested chunk was not found.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, fetchapp.ErrPermissionDenied):
+		writeAPIError(writer, http.StatusForbidden, "PERMISSION_DENIED", "The requested operation is not permitted.", requestIDFrom(request.Context()), false)
+	case errors.Is(err, context.DeadlineExceeded):
+		writeAPIError(writer, http.StatusGatewayTimeout, "DEPENDENCY_UNAVAILABLE", "The fetch deadline was exceeded.", requestIDFrom(request.Context()), true)
+	case errors.Is(err, context.Canceled):
+		writeAPIError(writer, http.StatusRequestTimeout, "REQUEST_CANCELLED", "The request was cancelled.", requestIDFrom(request.Context()), true)
+	default:
+		s.logger.ErrorContext(request.Context(), "fetch request failed", "error", err)
+		writeAPIError(writer, http.StatusInternalServerError, "INTERNAL", "The fetch request failed.", requestIDFrom(request.Context()), true)
+	}
 }
 
 func (s *Server) writeDecodeError(writer http.ResponseWriter, request *http.Request, err error) {
