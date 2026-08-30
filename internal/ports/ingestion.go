@@ -42,14 +42,15 @@ type ObjectStore interface {
 // ParseInput describes a validated source object opened by the worker. Parsers receive
 // a bounded reader and source metadata; they never receive object-store credentials.
 type ParseInput struct {
-	Reference  ObjectRef
-	Body       io.Reader
-	Filename   string
-	MediaType  string
-	SourceType string
-	SourceURI  string
-	DocumentID string
-	VersionID  string
+	Reference       ObjectRef
+	Body            io.Reader
+	Filename        string
+	MediaType       string
+	SourceType      string
+	SourceURI       string
+	KnowledgeBaseID string
+	DocumentID      string
+	VersionID       string
 }
 
 // Parser converts a validated object into the internal normalized document model.
