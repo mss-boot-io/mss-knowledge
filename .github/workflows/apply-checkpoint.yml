@@ -63,6 +63,10 @@ jobs:
           go mod tidy
           git add go.mod go.sum
 
+          # GitHub Actions' GITHUB_TOKEN cannot update workflow files. The CI
+          # workflow is applied separately through the connected GitHub app.
+          git restore --source=HEAD --staged --worktree .github/workflows/ci.yml
+
           rm -rf .checkpoint/parts .checkpoint/message.txt .checkpoint/READY
           git add -A
           git diff --cached --check
