@@ -26,13 +26,14 @@ var ErrInvalidDocument = errors.New("invalid knowledge document")
 
 // Document is the parser-independent normalized representation stored in S3.
 type Document struct {
-	SchemaVersion string   `json:"schema_version"`
-	DocumentID    string   `json:"document_id"`
-	VersionID     string   `json:"version_id"`
-	Title         string   `json:"title"`
-	Language      string   `json:"language,omitempty"`
-	Metadata      Metadata `json:"metadata"`
-	Blocks        []Block  `json:"blocks"`
+	SchemaVersion  string   `json:"schema_version"`
+	KnowledgeBaseID string   `json:"knowledge_base_id"`
+	DocumentID     string   `json:"document_id"`
+	VersionID      string   `json:"version_id"`
+	Title          string   `json:"title"`
+	Language       string   `json:"language,omitempty"`
+	Metadata       Metadata `json:"metadata"`
+	Blocks         []Block  `json:"blocks"`
 }
 
 // Metadata identifies the immutable source and parser output.
@@ -77,8 +78,9 @@ type Chunk struct {
 
 // Validate checks the normalized document before it is persisted or chunked.
 func (d Document) Validate() error {
-	if strings.TrimSpace(d.SchemaVersion) == "" || strings.TrimSpace(d.DocumentID) == "" ||
-		strings.TrimSpace(d.VersionID) == "" || strings.TrimSpace(d.Title) == "" {
+	if strings.TrimSpace(d.SchemaVersion) == "" || strings.TrimSpace(d.KnowledgeBaseID) == "" ||
+		strings.TrimSpace(d.DocumentID) == "" || strings.TrimSpace(d.VersionID) == "" ||
+		strings.TrimSpace(d.Title) == "" {
 		return fmt.Errorf("%w: document identity fields must not be empty", ErrInvalidDocument)
 	}
 	if strings.TrimSpace(d.Metadata.SourceType) == "" || strings.TrimSpace(d.Metadata.SourceURI) == "" ||
