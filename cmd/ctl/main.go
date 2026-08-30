@@ -34,9 +34,9 @@ func run(arguments []string) error {
 			return fmt.Errorf("configuration is invalid: %w", err)
 		}
 		return writeJSON(map[string]any{
-			"status":      "valid",
-			"service":     cfg.ServiceName,
-			"environment": cfg.Environment,
+			"status":       "valid",
+			"service":      cfg.ServiceName,
+			"environment":  cfg.Environment,
 			"http_address": cfg.HTTP.Address,
 		})
 	case "help", "-h", "--help":
