@@ -1,0 +1,36 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage*.txt
+
+# Runtime configuration
+.env
+.env.*
+!.env.example
+/configs/local.*
+
+# Local data
+/data/
+/tmp/
+*.db
+*.sqlite
+
+# IDE and operating system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Certificates and credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+
+# Generated
+/api/openapi/generated/
+/internal/generated/

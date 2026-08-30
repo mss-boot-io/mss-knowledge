@@ -1,0 +1,516 @@
+openapi: 3.1.0
+info:
+  title: MSS Knowledge API
+  version: 0.1.0
+  description: |
+    Foundation REST contract for the self-hosted MSS Knowledge gateway.
+    MCP schemas are documented separately and share the same application services.
+servers:
+  - url: https://knowledge.example.com
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Process liveness
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Dependency readiness
+      security: []
+      responses:
+        '200':
+          description: All configured readiness probes pass.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: One or more dependencies are not ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+  /version:
+    get:
+      operationId: getVersion
+      summary: Build metadata
+      security: []
+      responses:
+        '200':
+          description: Build metadata for the running binary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+  /v1/search:
+    post:
+      operationId: searchKnowledge
+      summary: Search authorized knowledge bases
+      description: |
+        Runs exact, fast, or balanced retrieval within the knowledge bases visible
+        to the authenticated principal. Requested knowledge-base IDs only narrow
+        access and can never expand it.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Versioned knowledge hits.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/InvalidArgument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /v1/knowledge-bases/{kb_id}/documents:
+    post:
+      operationId: uploadDocument
+      summary: Upload a TXT or Markdown document
+      description: |
+        Stores the immutable source object in S3 and creates a durable PostgreSQL
+        ingestion job. Processing is asynchronous. The first verifiable release
+        accepts the raw file body and requires X-File-Name.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kb_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: X-File-Name
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: X-Document-Title
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-External-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              format: binary
+          text/markdown:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '202':
+          description: The immutable source and durable ingestion job were accepted.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionSubmission'
+        '400':
+          $ref: '#/components/responses/InvalidArgument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          description: The media type is not supported by the v0.1 native parser.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /v1/ingestion-jobs/{job_id}:
+    get:
+      operationId: getIngestionJob
+      summary: Read an authorized ingestion job
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Current durable ingestion state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJobStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          description: The job does not exist or is not visible to the principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    InvalidArgument:
+      description: The request is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthenticated:
+      description: Authentication is required or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    PermissionDenied:
+      description: The authenticated principal is not authorized.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    PayloadTooLarge:
+      description: The request body exceeds the configured limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    DependencyUnavailable:
+      description: A required dependency is not configured or unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InternalError:
+      description: The request failed unexpectedly.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          const: up
+        service:
+          type: string
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ready, not_ready]
+    VersionResponse:
+      type: object
+      additionalProperties: false
+      required: [version, commit, date]
+      properties:
+        version:
+          type: string
+        commit:
+          type: string
+        date:
+          type: string
+    IngestionSubmission:
+      type: object
+      additionalProperties: false
+      required: [document_id, version_id, job_id, version_number, state, status_url]
+      properties:
+        document_id:
+          type: string
+        version_id:
+          type: string
+        job_id:
+          type: string
+        version_number:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          const: PENDING
+        status_url:
+          type: string
+    IngestionJobStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - knowledge_base_id
+        - document_id
+        - version_id
+        - kind
+        - state
+        - current_stage
+        - attempt
+        - max_attempts
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        knowledge_base_id:
+          type: string
+        document_id:
+          type: string
+        version_id:
+          type: string
+        kind:
+          type: string
+        state:
+          type: string
+          enum: [PENDING, RUNNING, RETRY_WAIT, SUCCEEDED, FAILED, CANCELLED]
+        current_stage:
+          type: string
+          enum: [RECEIVED, STORED, VALIDATING, PARSING, NORMALIZING, CHUNKING, EMBEDDING, INDEXING, VERIFYING, PUBLISHING, READY]
+        attempt:
+          type: integer
+          minimum: 0
+        max_attempts:
+          type: integer
+          minimum: 1
+        error_code:
+          type: string
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+    SearchRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        knowledge_base_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        mode:
+          type: string
+          default: balanced
+          enum: [exact, fast, balanced]
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 8
+        filters:
+          $ref: '#/components/schemas/SearchFilters'
+        include:
+          $ref: '#/components/schemas/SearchInclude'
+    SearchFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        document_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        content_types:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        languages:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        updated_after:
+          type: string
+          format: date-time
+        updated_before:
+          type: string
+          format: date-time
+    SearchInclude:
+      type: object
+      additionalProperties: false
+      properties:
+        scores:
+          type: boolean
+          default: false
+        diagnostics:
+          type: boolean
+          default: false
+    SearchResponse:
+      type: object
+      additionalProperties: false
+      required: [query_id, mode, degraded, results]
+      properties:
+        query_id:
+          type: string
+        mode:
+          type: string
+          enum: [exact, fast, balanced]
+        degraded:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchHit'
+        next_cursor:
+          type: string
+    SearchHit:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - knowledge_base_id
+        - document_id
+        - version_id
+        - title
+        - text
+        - source_uri
+        - content_sha256
+        - updated_at
+      properties:
+        id:
+          type: string
+        knowledge_base_id:
+          type: string
+        document_id:
+          type: string
+        version_id:
+          type: string
+        parent_chunk_id:
+          type: string
+        ordinal:
+          type: integer
+          minimum: 0
+        title:
+          type: string
+        heading_path:
+          type: array
+          items:
+            type: string
+        text:
+          type: string
+        source_uri:
+          type: string
+          format: uri
+        page_start:
+          type: integer
+          minimum: 0
+        page_end:
+          type: integer
+          minimum: 0
+        content_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        updated_at:
+          type: string
+          format: date-time
+        scores:
+          $ref: '#/components/schemas/SearchScores'
+    SearchScores:
+      type: object
+      additionalProperties: false
+      properties:
+        lexical:
+          type: number
+        vector:
+          type: number
+        fused:
+          type: number
+        rerank:
+          type: number
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_ARGUMENT
+                - UNAUTHENTICATED
+                - PERMISSION_DENIED
+                - NOT_FOUND
+                - CONFLICT
+                - RATE_LIMITED
+                - PAYLOAD_TOO_LARGE
+                - DEPENDENCY_UNAVAILABLE
+                - REQUEST_CANCELLED
+                - INTERNAL
+            message:
+              type: string
+            request_id:
+              type: string
+            retryable:
+              type: boolean
