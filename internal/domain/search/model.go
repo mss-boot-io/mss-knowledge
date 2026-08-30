@@ -30,10 +30,10 @@ type Request struct {
 
 // Filters narrows search within the caller's authorized knowledge bases.
 type Filters struct {
-	DocumentIDs  []string   `json:"document_ids,omitempty"`
-	ContentTypes []string   `json:"content_types,omitempty"`
-	Languages    []string   `json:"languages,omitempty"`
-	UpdatedAfter *time.Time `json:"updated_after,omitempty"`
+	DocumentIDs   []string   `json:"document_ids,omitempty"`
+	ContentTypes  []string   `json:"content_types,omitempty"`
+	Languages     []string   `json:"languages,omitempty"`
+	UpdatedAfter  *time.Time `json:"updated_after,omitempty"`
 	UpdatedBefore *time.Time `json:"updated_before,omitempty"`
 }
 
@@ -99,8 +99,8 @@ func (p Principal) HasScope(scope string) bool {
 
 // StoreRequest is the authorized, backend-neutral request passed to SearchStore.
 type StoreRequest struct {
-	TenantID          string
-	KnowledgeBaseIDs  []string
+	TenantID           string
+	KnowledgeBaseIDs   []string
 	Query              string
 	Mode               Mode
 	CandidateLimit     int
