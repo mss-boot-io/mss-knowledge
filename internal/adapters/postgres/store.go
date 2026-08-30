@@ -35,14 +35,14 @@ var (
 
 // Config controls the PostgreSQL connection pool.
 type Config struct {
-	URL                  string
-	ApplicationName      string
-	MaxConnections       int32
-	MinConnections       int32
-	ConnectTimeout       time.Duration
+	URL                   string
+	ApplicationName       string
+	MaxConnections        int32
+	MinConnections        int32
+	ConnectTimeout        time.Duration
 	MaxConnectionLifetime time.Duration
 	MaxConnectionIdleTime time.Duration
-	HealthCheckPeriod    time.Duration
+	HealthCheckPeriod     time.Duration
 }
 
 // Store is the PostgreSQL control-plane adapter.
