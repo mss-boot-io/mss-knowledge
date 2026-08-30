@@ -31,8 +31,8 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Download module graph
-        run: go mod download
+      - name: Download exact module graph
+        run: go mod download all
 
       - name: Pack toolchain and module cache
         shell: bash
