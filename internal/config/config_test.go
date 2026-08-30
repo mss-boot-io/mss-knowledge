@@ -24,16 +24,16 @@ func TestFromLookupUsesDefaults(t *testing.T) {
 
 func TestFromLookupOverridesValues(t *testing.T) {
 	values := map[string]string{
-		"MSS_KNOWLEDGE_SERVICE_NAME":                  "gateway",
-		"MSS_KNOWLEDGE_ENVIRONMENT":                   "test",
-		"MSS_KNOWLEDGE_HTTP_ADDRESS":                  "127.0.0.1:9090",
-		"MSS_KNOWLEDGE_HTTP_READ_HEADER_TIMEOUT":      "2s",
-		"MSS_KNOWLEDGE_HTTP_READ_TIMEOUT":             "3s",
-		"MSS_KNOWLEDGE_HTTP_WRITE_TIMEOUT":            "4s",
-		"MSS_KNOWLEDGE_HTTP_IDLE_TIMEOUT":             "5s",
-		"MSS_KNOWLEDGE_HTTP_MAX_REQUEST_BYTES":        "2048",
-		"MSS_KNOWLEDGE_SHUTDOWN_TIMEOUT":              "6s",
-		"MSS_KNOWLEDGE_LOG_LEVEL":                     "DEBUG",
+		"MSS_KNOWLEDGE_SERVICE_NAME":             "gateway",
+		"MSS_KNOWLEDGE_ENVIRONMENT":              "test",
+		"MSS_KNOWLEDGE_HTTP_ADDRESS":             "127.0.0.1:9090",
+		"MSS_KNOWLEDGE_HTTP_READ_HEADER_TIMEOUT": "2s",
+		"MSS_KNOWLEDGE_HTTP_READ_TIMEOUT":        "3s",
+		"MSS_KNOWLEDGE_HTTP_WRITE_TIMEOUT":       "4s",
+		"MSS_KNOWLEDGE_HTTP_IDLE_TIMEOUT":        "5s",
+		"MSS_KNOWLEDGE_HTTP_MAX_REQUEST_BYTES":   "2048",
+		"MSS_KNOWLEDGE_SHUTDOWN_TIMEOUT":         "6s",
+		"MSS_KNOWLEDGE_LOG_LEVEL":                "DEBUG",
 	}
 
 	cfg, err := FromLookup(func(key string) (string, bool) {
@@ -63,9 +63,9 @@ func TestFromLookupOverridesValues(t *testing.T) {
 
 func TestFromLookupRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
-		name   string
-		key    string
-		value  string
+		name  string
+		key   string
+		value string
 	}{
 		{name: "environment", key: "MSS_KNOWLEDGE_ENVIRONMENT", value: "unknown"},
 		{name: "address", key: "MSS_KNOWLEDGE_HTTP_ADDRESS", value: "8080"},
