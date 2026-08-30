@@ -1,0 +1,14 @@
+github.com/jackc/pgpassfile v1.0.0 h1:QRfA2VOAGwrp8ivWS0WCLy2HnsDLVHG03JEF7i7sBJQ=
+github.com/jackc/pgpassfile v1.0.0/go.mod h1:lX5b6IgJHr5s09lW0n1ZsDza5hCjl5b1L1R9anLKkvg=
+github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:vpqFq1Q5Gm5sYBIhqg7ywCOEoHNQc6DHPig0oRCuqV8=
+github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761/go.mod h1:3Tz/4QJ5le6sNPPv5YL1e9FwI7kCqRQN7aRzVtGeiOQ=
+github.com/jackc/pgx/v5 v5.10.0 h1:HA6V7g0Y8BxVv9utF2D2DmnpRZSEjs1Q4rk6KOR6pxw=
+github.com/jackc/pgx/v5 v5.10.0/go.mod h1:QgxH8LCkCBjHj9AxxFh08KT6SNhycocbj2I3bK8CS6U=
+github.com/jackc/puddle/v2 v2.2.2 h1:e4ee0mDhaG4rZB5YhM7JLR2VYAkL42v5QwrF/dT0B6Y=
+github.com/jackc/puddle/v2 v2.2.2/go.mod h1:3h2F2+Eb0l/Sv7nWzTUJh3wr0sT0OwHi8EWT9tNe3Fk=
+golang.org/x/crypto v0.41.0 h1:bMkK8wIot3Vx9T3G6sNcDqBR6GdBspjUjVKYRq5FJ0Y=
+golang.org/x/crypto v0.41.0/go.mod h1:4TGhURT5M1KHJvH6GdlXyItzU25c4GJf7fqpgs7VxkY=
+golang.org/x/sync v0.17.0 h1:9pBvT7YF9iE7f1fY7E03z4qgP5L5Kxq8i3fH2f0wq8E=
+golang.org/x/sync v0.17.0/go.mod h1:WlV7XWkw7hY80MNWk3AfaAsRZ4JkF0Zl7k3cZpJcOAo=
+golang.org/x/text v0.28.0 h1:QPSknf9f/7t7bC4m3o8bwVhR7I1D+WYyRrwVxIep7uU=
+golang.org/x/text v0.28.0/go.mod h1:QemD1pSg3zq3cB5M7B2f1w0C7xYl0GQEd2Qy4uG+VJI=
