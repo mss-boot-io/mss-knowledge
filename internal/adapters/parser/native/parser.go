@@ -86,9 +86,10 @@ func (p *Parser) Parse(ctx context.Context, input ports.ParseInput) (knowledge.D
 	if err := ctx.Err(); err != nil {
 		return knowledge.Document{}, err
 	}
-	if input.Body == nil || strings.TrimSpace(input.DocumentID) == "" ||
-		strings.TrimSpace(input.VersionID) == "" || strings.TrimSpace(input.Filename) == "" ||
-		strings.TrimSpace(input.SourceType) == "" || strings.TrimSpace(input.SourceURI) == "" {
+	if input.Body == nil || strings.TrimSpace(input.KnowledgeBaseID) == "" ||
+		strings.TrimSpace(input.DocumentID) == "" || strings.TrimSpace(input.VersionID) == "" ||
+		strings.TrimSpace(input.Filename) == "" || strings.TrimSpace(input.SourceType) == "" ||
+		strings.TrimSpace(input.SourceURI) == "" {
 		return knowledge.Document{}, fmt.Errorf("%w: required fields must not be empty", ErrInvalidInput)
 	}
 	if !p.Supports(input.MediaType, input.Filename) {
@@ -139,10 +140,11 @@ func (p *Parser) Parse(ctx context.Context, input ports.ParseInput) (knowledge.D
 	}
 
 	document := knowledge.Document{
-		SchemaVersion: "1.0",
-		DocumentID:    strings.TrimSpace(input.DocumentID),
-		VersionID:     strings.TrimSpace(input.VersionID),
-		Title:         title,
+		SchemaVersion:   "1.0",
+		KnowledgeBaseID: strings.TrimSpace(input.KnowledgeBaseID),
+		DocumentID:      strings.TrimSpace(input.DocumentID),
+		VersionID:       strings.TrimSpace(input.VersionID),
+		Title:           title,
 		Metadata: knowledge.Metadata{
 			SourceType:    strings.TrimSpace(input.SourceType),
 			SourceURI:     strings.TrimSpace(input.SourceURI),
