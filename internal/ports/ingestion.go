@@ -39,11 +39,15 @@ type ObjectStore interface {
 	Check(ctx context.Context) error
 }
 
-// ParseInput describes a validated source object.
+// ParseInput describes a validated source object opened by the worker. Parsers receive
+// a bounded reader and source metadata; they never receive object-store credentials.
 type ParseInput struct {
 	Reference  ObjectRef
+	Body       io.Reader
 	Filename   string
 	MediaType  string
+	SourceType string
+	SourceURI  string
 	DocumentID string
 	VersionID  string
 }
