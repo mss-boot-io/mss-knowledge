@@ -114,8 +114,8 @@ func (s *Service) Search(
 	}
 
 	hits, err := s.store.Search(ctx, searchdomain.StoreRequest{
-		TenantID:          principal.TenantID,
-		KnowledgeBaseIDs:  allowedKnowledgeBases,
+		TenantID:           principal.TenantID,
+		KnowledgeBaseIDs:   allowedKnowledgeBases,
 		Query:              strings.TrimSpace(request.Query),
 		Mode:               request.Mode,
 		CandidateLimit:     candidateLimit,
