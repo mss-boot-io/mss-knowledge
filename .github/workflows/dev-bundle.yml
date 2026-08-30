@@ -5,10 +5,17 @@ on:
     branches:
       - codex/mss-knowledge-foundation
     paths:
+      - go.mod
+      - go.sum
       - .github/workflows/dev-bundle.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: dev-bundle-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   bundle:
