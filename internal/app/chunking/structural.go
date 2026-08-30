@@ -357,7 +357,7 @@ func (s *Structural) buildDraft(segments []segment) (draft, error) {
 		pageEnd = maximumPage(pageEnd, item.pageEnd)
 		atomic = atomic || item.atomic
 	}
-	text := strings.TrimSpace(strings.Join(texts, "\n\n"))
+	text := cleanText(strings.Join(texts, "\n\n"), contentType)
 	tokens := s.counter.Count(text)
 	if text == "" || tokens <= 0 {
 		return draft{}, fmt.Errorf("%w: draft contains no countable text", ErrTokenCount)
