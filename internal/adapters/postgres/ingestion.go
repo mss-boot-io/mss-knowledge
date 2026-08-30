@@ -414,6 +414,96 @@ WHERE version.tenant_id = $1
 	return input, nil
 }
 
+// ListActiveVersionInputs enumerates every visible READY version selected for a Redis rebuild.
+// Empty tenant and knowledge-base filters intentionally select all tenants and knowledge bases.
+func (s *Store) ListActiveVersionInputs(
+	ctx context.Context,
+	tenantID string,
+	knowledgeBaseID string,
+) ([]ports.ActiveVersionInput, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+    version.tenant_id,
+    version.kb_id,
+    version.document_id,
+    version.id,
+    document.title,
+    version.filename,
+    version.media_type,
+    kb.default_language,
+    version.source_uri,
+    version.object_bucket,
+    version.object_key,
+    version.object_version_id,
+    version.size_bytes,
+    version.content_sha256,
+    version.parser_profile_id,
+    version.chunker_profile_id,
+    version.embedding_profile_id,
+    version.index_profile_id,
+    version.pipeline_fingerprint,
+    version.published_at
+FROM documents AS document
+JOIN document_versions AS version
+  ON version.tenant_id = document.tenant_id
+ AND version.document_id = document.id
+ AND version.id = document.active_version_id
+JOIN knowledge_bases AS kb
+  ON kb.tenant_id = document.tenant_id
+ AND kb.id = document.kb_id
+WHERE ($1 = '' OR document.tenant_id = $1)
+  AND ($2 = '' OR document.kb_id = $2)
+  AND document.status = 'active'
+  AND document.deleted_at IS NULL
+  AND version.status = 'READY'
+  AND version.deleted_at IS NULL
+  AND version.published_at IS NOT NULL
+  AND kb.status = 'active'
+  AND kb.deleted_at IS NULL
+ORDER BY version.tenant_id, version.kb_id, version.document_id, version.id`,
+		strings.TrimSpace(tenantID), strings.TrimSpace(knowledgeBaseID))
+	if err != nil {
+		return nil, fmt.Errorf("list active document versions: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]ports.ActiveVersionInput, 0)
+	for rows.Next() {
+		var item ports.ActiveVersionInput
+		if err := rows.Scan(
+			&item.TenantID,
+			&item.KnowledgeBaseID,
+			&item.DocumentID,
+			&item.VersionID,
+			&item.Title,
+			&item.Filename,
+			&item.MediaType,
+			&item.DefaultLanguage,
+			&item.SourceURI,
+			&item.Original.Bucket,
+			&item.Original.Key,
+			&item.Original.VersionID,
+			&item.Original.Size,
+			&item.Original.SHA256,
+			&item.Profiles.Parser,
+			&item.Profiles.Chunker,
+			&item.Profiles.Embedding,
+			&item.Profiles.Index,
+			&item.PipelineFingerprint,
+			&item.PublishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan active document version: %w", err)
+		}
+		item.Original.MediaType = item.MediaType
+		item.PublishedAt = item.PublishedAt.UTC()
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active document versions: %w", err)
+	}
+	return result, nil
+}
+
 // ReplaceVersionChunks replaces the rebuildable PostgreSQL chunk catalog for one version.
 func (s *Store) ReplaceVersionChunks(
 	ctx context.Context,
@@ -508,12 +598,20 @@ WHERE id = $1
 	return nil
 }
 
-// PublishVersion atomically switches the active version and emits durable events.
+// PublishVersion atomically switches the active version, completes the fenced job,
+// and emits durable events. The job lease is validated inside the same serializable
+// transaction so a stale worker can never make a version visible.
 func (s *Store) PublishVersion(ctx context.Context, request ports.PublishVersionRequest) error {
 	publishedAt := request.PublishedAt.UTC()
-	if request.TenantID == "" || request.KnowledgeBaseID == "" || request.DocumentID == "" || request.VersionID == "" || publishedAt.IsZero() {
+	request.TenantID = strings.TrimSpace(request.TenantID)
+	request.KnowledgeBaseID = strings.TrimSpace(request.KnowledgeBaseID)
+	request.LeaseOwner = strings.TrimSpace(request.LeaseOwner)
+	if request.TenantID == "" || request.KnowledgeBaseID == "" || request.DocumentID == "" ||
+		request.VersionID == "" || request.JobID == "" || request.JobAttempt <= 0 ||
+		request.LeaseOwner == "" || publishedAt.IsZero() {
 		return fmt.Errorf("invalid publication request")
 	}
+
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return fmt.Errorf("begin publication transaction: %w", err)
@@ -541,22 +639,62 @@ FOR UPDATE`, request.TenantID, request.KnowledgeBaseID, string(request.DocumentI
 	} else if err != nil {
 		return fmt.Errorf("lock version for publication: %w", err)
 	}
-	if status == string(document.VersionStatusReady) && currentVersionID != nil && *currentVersionID == string(request.VersionID) {
-		return tx.Commit(ctx)
-	}
-	if status != string(document.VersionStatusProcessing) {
-		return fmt.Errorf("document version %s is %s, want PROCESSING", request.VersionID, status)
+
+	var jobState, jobStage, leaseOwner string
+	var jobAttempt int
+	var leaseExpiresAt *time.Time
+	var jobTenantID, jobKnowledgeBaseID, jobDocumentID, jobVersionID string
+	if err := tx.QueryRow(ctx, `
+SELECT tenant_id, kb_id, document_id, version_id, state, current_stage,
+       attempt, lease_owner, lease_expires_at
+FROM ingestion_jobs
+WHERE id = $1
+FOR UPDATE`, string(request.JobID)).Scan(
+		&jobTenantID,
+		&jobKnowledgeBaseID,
+		&jobDocumentID,
+		&jobVersionID,
+		&jobState,
+		&jobStage,
+		&jobAttempt,
+		&leaseOwner,
+		&leaseExpiresAt,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return ports.ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock ingestion job for publication: %w", err)
 	}
 
-	if currentVersionID != nil && *currentVersionID != "" && *currentVersionID != string(request.VersionID) {
-		if _, err := tx.Exec(ctx, `
+	identitiesMatch := jobTenantID == request.TenantID && jobKnowledgeBaseID == request.KnowledgeBaseID &&
+		jobDocumentID == string(request.DocumentID) && jobVersionID == string(request.VersionID)
+	alreadyPublished := status == string(document.VersionStatusReady) && currentVersionID != nil &&
+		*currentVersionID == string(request.VersionID)
+	alreadyCompleted := jobState == string(ingestion.StateSucceeded) && jobStage == string(ingestion.StageReady) &&
+		jobAttempt == request.JobAttempt
+	if identitiesMatch && alreadyPublished && alreadyCompleted {
+		return tx.Commit(ctx)
+	}
+
+	if !identitiesMatch || jobState != string(ingestion.StateRunning) ||
+		jobStage != string(ingestion.StagePublishing) || jobAttempt != request.JobAttempt ||
+		leaseOwner != request.LeaseOwner || leaseExpiresAt == nil || !publishedAt.Before(*leaseExpiresAt) {
+		return ErrLeaseLost
+	}
+
+	if !alreadyPublished {
+		if status != string(document.VersionStatusProcessing) {
+			return fmt.Errorf("document version %s is %s, want PROCESSING", request.VersionID, status)
+		}
+
+		if currentVersionID != nil && *currentVersionID != "" && *currentVersionID != string(request.VersionID) {
+			if _, err := tx.Exec(ctx, `
 UPDATE document_versions
 SET status = 'SUPERSEDED', superseded_at = $2
 WHERE id = $1 AND status = 'READY'`, *currentVersionID, publishedAt); err != nil {
-			return fmt.Errorf("supersede previous document version: %w", err)
+				return fmt.Errorf("supersede previous document version: %w", err)
+			}
 		}
-	}
-	command, err := tx.Exec(ctx, `
+		command, err := tx.Exec(ctx, `
 UPDATE document_versions
 SET status = 'READY', published_at = $2, error_code = '', error_detail_json = '{}'::jsonb
 WHERE id = $1
@@ -566,36 +704,83 @@ WHERE id = $1
   AND manifest_object_key <> ''
   AND manifest_object_version_id <> ''
   AND chunk_count > 0`, string(request.VersionID), publishedAt)
-	if err != nil {
-		return fmt.Errorf("publish document version: %w", err)
-	}
-	if command.RowsAffected() != 1 {
-		return fmt.Errorf("document version artifacts are incomplete")
-	}
-	if _, err := tx.Exec(ctx, `
+		if err != nil {
+			return fmt.Errorf("publish document version: %w", err)
+		}
+		if command.RowsAffected() != 1 {
+			return fmt.Errorf("document version artifacts are incomplete")
+		}
+		if _, err := tx.Exec(ctx, `
 UPDATE documents
 SET active_version_id = $2, updated_at = $3
-WHERE id = $1`, string(request.DocumentID), string(request.VersionID), publishedAt); err != nil {
-		return fmt.Errorf("switch active document version: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
+WHERE tenant_id = $4 AND kb_id = $5 AND id = $1`,
+			string(request.DocumentID), string(request.VersionID), publishedAt,
+			request.TenantID, request.KnowledgeBaseID); err != nil {
+			return fmt.Errorf("switch active document version: %w", err)
+		}
+		command, err = tx.Exec(ctx, `
 UPDATE knowledge_bases
 SET revision = revision + 1, updated_at = $2
-WHERE tenant_id = $1 AND id = $3`, request.TenantID, publishedAt, request.KnowledgeBaseID); err != nil {
-		return fmt.Errorf("increment knowledge-base revision: %w", err)
+WHERE tenant_id = $1 AND id = $3`, request.TenantID, publishedAt, request.KnowledgeBaseID)
+		if err != nil {
+			return fmt.Errorf("increment knowledge-base revision: %w", err)
+		}
+		if command.RowsAffected() != 1 {
+			return ports.ErrNotFound
+		}
 	}
+
+	command, err := tx.Exec(ctx, `
+UPDATE ingestion_jobs
+SET state = 'SUCCEEDED',
+    current_stage = 'READY',
+    lease_owner = '',
+    lease_expires_at = NULL,
+    error_code = '',
+    error_message = '',
+    completed_at = $6,
+    updated_at = $6
+WHERE id = $1
+  AND tenant_id = $2
+  AND version_id = $3
+  AND attempt = $4
+  AND lease_owner = $5
+  AND state = 'RUNNING'
+  AND current_stage = 'PUBLISHING'
+  AND lease_expires_at > $6`,
+		string(request.JobID), request.TenantID, string(request.VersionID), request.JobAttempt,
+		request.LeaseOwner, publishedAt)
+	if err != nil {
+		return fmt.Errorf("complete ingestion job: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return ErrLeaseLost
+	}
+
 	payload, _ := json.Marshal(map[string]any{
 		"tenant_id":         request.TenantID,
 		"knowledge_base_id": request.KnowledgeBaseID,
 		"document_id":       request.DocumentID,
 		"version_id":        request.VersionID,
+		"job_id":            request.JobID,
 	})
-	if _, err := tx.Exec(ctx, `
+	if !alreadyPublished {
+		if _, err := tx.Exec(ctx, `
 INSERT INTO outbox_events (aggregate_type, aggregate_id, event_type, payload_json, occurred_at)
 VALUES ('document', $1, 'knowledge.document.version.published', $2::jsonb, $3)`,
-		string(request.DocumentID), string(payload), publishedAt); err != nil {
-		return fmt.Errorf("insert publication outbox event: %w", err)
+			string(request.DocumentID), string(payload), publishedAt); err != nil {
+			return fmt.Errorf("insert publication outbox event: %w", err)
+		}
 	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO audit_events (
+    tenant_id, action, resource_type, resource_id, outcome, metadata_json, created_at
+)
+VALUES ($1, 'knowledge.document.version.published', 'document_version', $2, 'succeeded', $3::jsonb, $4)`,
+		request.TenantID, string(request.VersionID), string(payload), publishedAt); err != nil {
+		return fmt.Errorf("insert publication audit event: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit publication transaction: %w", err)
 	}
@@ -701,6 +886,7 @@ func validateCreateUpload(request ports.CreateUploadRequest) error {
 
 var _ ports.UploadRepository = (*Store)(nil)
 var _ ports.IngestionReader = (*Store)(nil)
+var _ ports.RebuildRepository = (*Store)(nil)
 var _ ports.JobRepository = (*Store)(nil)
 var _ ports.ChunkRepository = (*Store)(nil)
 var _ ports.KnowledgeBaseWriteAuthorizer = (*Store)(nil)

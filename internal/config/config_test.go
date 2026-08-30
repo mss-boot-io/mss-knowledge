@@ -27,6 +27,10 @@ func TestFromLookupUsesDefaults(t *testing.T) {
 	if cfg.Auth.Mode != "disabled" {
 		t.Fatalf("Auth.Mode = %q, want disabled", cfg.Auth.Mode)
 	}
+	if cfg.S3.Prefix != "tenants" || cfg.Worker.LeaseDuration != 5*time.Minute ||
+		cfg.Worker.RetryBase != 5*time.Second || cfg.Worker.RetryMaximum != 5*time.Minute {
+		t.Fatalf("unexpected storage/worker defaults: S3=%+v Worker=%+v", cfg.S3, cfg.Worker)
+	}
 }
 
 func TestFromLookupOverridesValues(t *testing.T) {
@@ -49,6 +53,7 @@ func TestFromLookupOverridesValues(t *testing.T) {
 		"MSS_KNOWLEDGE_REDIS_TLS":                    "true",
 		"MSS_KNOWLEDGE_REDIS_INDEX_NAME":             "chunks-v2",
 		"MSS_KNOWLEDGE_REDIS_KEY_PREFIX":             "test:chunk:",
+		"MSS_KNOWLEDGE_S3_PREFIX":                    "objects/root",
 		"MSS_KNOWLEDGE_AUTH_MODE":                    "STATIC",
 		"MSS_KNOWLEDGE_STATIC_TOKEN":                 " bearer-secret ",
 		"MSS_KNOWLEDGE_STATIC_TENANT_ID":             "tenant_1",
@@ -61,6 +66,9 @@ func TestFromLookupOverridesValues(t *testing.T) {
 		"MSS_KNOWLEDGE_SEARCH_MAX_HITS_PER_DOCUMENT": "2",
 		"MSS_KNOWLEDGE_WORKER_POLL_INTERVAL":         "750ms",
 		"MSS_KNOWLEDGE_WORKER_LEASE_DURATION":        "45s",
+		"MSS_KNOWLEDGE_WORKER_ID":                    "worker-test",
+		"MSS_KNOWLEDGE_WORKER_RETRY_BASE":            "3s",
+		"MSS_KNOWLEDGE_WORKER_RETRY_MAXIMUM":         "2m",
 		"MSS_KNOWLEDGE_SHUTDOWN_TIMEOUT":             "6s",
 		"MSS_KNOWLEDGE_LOG_LEVEL":                    "DEBUG",
 	}
@@ -94,6 +102,9 @@ func TestFromLookupOverridesValues(t *testing.T) {
 	if cfg.Redis.Password != " secret " {
 		t.Fatalf("Redis password was unexpectedly normalized")
 	}
+	if cfg.S3.Prefix != "objects/root" {
+		t.Fatalf("unexpected S3 prefix: %+v", cfg.S3)
+	}
 	if cfg.Auth.Mode != "static" || cfg.Auth.StaticToken != " bearer-secret " || len(cfg.Auth.Scopes) != 2 {
 		t.Fatalf("unexpected auth config: %+v", cfg.Auth)
 	}
@@ -103,7 +114,9 @@ func TestFromLookupOverridesValues(t *testing.T) {
 	if cfg.Search.MaxTopK != 40 || cfg.Search.CandidateMultiplier != 4 || cfg.Search.MaxHitsPerDocument != 2 {
 		t.Fatalf("unexpected search config: %+v", cfg.Search)
 	}
-	if cfg.Worker.PollInterval != 750*time.Millisecond || cfg.Worker.LeaseDuration != 45*time.Second {
+	if cfg.Worker.ID != "worker-test" || cfg.Worker.PollInterval != 750*time.Millisecond ||
+		cfg.Worker.LeaseDuration != 45*time.Second || cfg.Worker.RetryBase != 3*time.Second ||
+		cfg.Worker.RetryMaximum != 2*time.Minute {
 		t.Fatalf("unexpected worker config: %+v", cfg.Worker)
 	}
 	if cfg.ShutdownTimeout != 6*time.Second || cfg.LogLevel != "debug" {
@@ -165,6 +178,7 @@ func TestValidateGatewayRequiresDependenciesAndAuthentication(t *testing.T) {
 	cfg.S3 = S3Config{
 		Endpoint:          "http://127.0.0.1:9000",
 		Bucket:            "mss-knowledge",
+		Prefix:            "tenants",
 		AccessKeyID:       "access-key",
 		SecretAccessKey:   "secret-key",
 		PathStyle:         true,

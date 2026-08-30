@@ -20,7 +20,6 @@ import (
 	searchapp "github.com/mss-boot-io/mss-knowledge/internal/app/search"
 	"github.com/mss-boot-io/mss-knowledge/internal/buildinfo"
 	"github.com/mss-boot-io/mss-knowledge/internal/config"
-	"github.com/mss-boot-io/mss-knowledge/internal/ports"
 	"github.com/mss-boot-io/mss-knowledge/internal/runtimeapp"
 	"github.com/mss-boot-io/mss-knowledge/internal/transport/httpapi"
 	"github.com/mss-boot-io/mss-knowledge/internal/transport/mcpserver"
@@ -60,16 +59,7 @@ func run() error {
 	}
 	defer postgres.Close()
 
-	embeddingProfile := ports.EmbeddingProfile{
-		Provider:      cfg.Embedding.Provider,
-		ModelID:       cfg.Embedding.Model,
-		ModelRevision: "1",
-		Dimension:     cfg.Embedding.Dimension,
-		VectorType:    "FLOAT32",
-		Normalize:     true,
-		BatchSize:     64,
-		Fingerprint:   fmt.Sprintf("%s:%s:%d:float32:l2", cfg.Embedding.Provider, cfg.Embedding.Model, cfg.Embedding.Dimension),
-	}
+	processingProfiles, _, embeddingProfile := runtimeapp.ProcessingProfiles(cfg)
 	embedder := deterministic.Provider{}
 	if err := embedder.Check(rootContext); err != nil {
 		return fmt.Errorf("check embedding provider: %w", err)
@@ -129,14 +119,10 @@ func run() error {
 		postgres,
 		ids,
 		ingestionapp.Config{
-			Bucket:   cfg.S3.Bucket,
-			MaxBytes: cfg.HTTP.MaxRequestBytes,
-			Profiles: ports.ProcessingProfileIDs{
-				Parser:    cfg.Processing.ParserProfileID,
-				Chunker:   cfg.Processing.ChunkerProfileID,
-				Embedding: cfg.Processing.EmbeddingProfileID,
-				Index:     cfg.Processing.IndexProfileID,
-			},
+			Bucket:             cfg.S3.Bucket,
+			BucketPrefix:       cfg.S3.Prefix,
+			MaxBytes:           cfg.HTTP.MaxRequestBytes,
+			Profiles:           processingProfiles,
 			EmbeddingModel:     cfg.Embedding.Model,
 			EmbeddingDimension: cfg.Embedding.Dimension,
 		},

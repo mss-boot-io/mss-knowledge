@@ -143,13 +143,15 @@ type PublishVersionRequest struct {
 	KnowledgeBaseID string
 	DocumentID      document.DocumentID
 	VersionID       document.VersionID
+	JobID           ingestion.JobID
+	JobAttempt      int
+	LeaseOwner      string
 	PublishedAt     time.Time
 	Artifacts       VersionArtifacts
 }
 
 // DocumentRepository persists version metadata and performs publication transactions.
 type DocumentRepository interface {
-	CreateVersion(ctx context.Context, version document.Version) error
 	SaveArtifacts(ctx context.Context, versionID document.VersionID, artifacts VersionArtifacts) error
 	PublishVersion(ctx context.Context, request PublishVersionRequest) error
 	MarkVersionFailed(ctx context.Context, versionID document.VersionID, code string, detail map[string]any) error
@@ -229,6 +231,17 @@ type UploadRepository interface {
 type IngestionReader interface {
 	GetJob(ctx context.Context, tenantID string, jobID ingestion.JobID) (ingestion.Job, error)
 	LoadVersionInput(ctx context.Context, tenantID string, versionID string) (VersionInput, error)
+}
+
+// ActiveVersionInput identifies one currently visible version that can be rebuilt from S3.
+type ActiveVersionInput struct {
+	VersionInput
+	PublishedAt time.Time
+}
+
+// RebuildRepository enumerates published versions for Redis reconstruction.
+type RebuildRepository interface {
+	ListActiveVersionInputs(ctx context.Context, tenantID, knowledgeBaseID string) ([]ActiveVersionInput, error)
 }
 
 // ChunkRepository replaces the durable chunk catalog for one immutable version.

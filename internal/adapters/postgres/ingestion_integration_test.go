@@ -174,33 +174,34 @@ func TestIngestionControlPlaneLifecycle(t *testing.T) {
 	if err := store.SaveArtifacts(t.Context(), document.VersionID(createRequest.VersionID), artifacts); err != nil {
 		t.Fatalf("SaveArtifacts() error = %v", err)
 	}
+	stageTime := claimedAt.Add(2 * time.Second)
+	for job.Stage != ingestion.StagePublishing {
+		next, ok := ingestion.NextStage(job.Stage)
+		if !ok {
+			t.Fatalf("no stage after %s before PUBLISHING", job.Stage)
+		}
+		if err := job.Advance("worker-integration", next, stageTime); err != nil {
+			t.Fatalf("Advance(%s) error = %v", next, err)
+		}
+		leaseExpiresAt := stageTime.Add(10 * time.Minute)
+		job.LeaseExpiresAt = &leaseExpiresAt
+		if err := store.Save(t.Context(), job); err != nil {
+			t.Fatalf("Save(%s) error = %v", next, err)
+		}
+		stageTime = stageTime.Add(time.Millisecond)
+	}
 	if err := store.PublishVersion(t.Context(), ports.PublishVersionRequest{
 		TenantID:        foundation.LocalTenantID,
 		KnowledgeBaseID: foundation.LocalKnowledgeBaseID,
 		DocumentID:      document.DocumentID(createRequest.DocumentID),
 		VersionID:       document.VersionID(createRequest.VersionID),
-		PublishedAt:     claimedAt.Add(time.Second),
+		JobID:           job.ID,
+		JobAttempt:      job.Attempt,
+		LeaseOwner:      "worker-integration",
+		PublishedAt:     stageTime,
 		Artifacts:       artifacts,
 	}); err != nil {
 		t.Fatalf("PublishVersion() error = %v", err)
-	}
-
-	stageTime := claimedAt.Add(2 * time.Second)
-	for {
-		next, ok := ingestion.NextStage(job.Stage)
-		if !ok {
-			break
-		}
-		if err := job.Advance("worker-integration", next, stageTime); err != nil {
-			t.Fatalf("Advance(%s) error = %v", next, err)
-		}
-		stageTime = stageTime.Add(time.Millisecond)
-	}
-	if err := job.Complete("worker-integration", stageTime); err != nil {
-		t.Fatalf("Complete() error = %v", err)
-	}
-	if err := store.Save(t.Context(), job); err != nil {
-		t.Fatalf("Save(completed) error = %v", err)
 	}
 
 	activeVersions, err := store.ActiveVersionIDs(t.Context(), foundation.LocalTenantID, []string{createRequest.DocumentID})
@@ -216,6 +217,9 @@ func TestIngestionControlPlaneLifecycle(t *testing.T) {
 	}
 	if completed.State != ingestion.StateSucceeded || completed.Stage != ingestion.StageReady || completed.CompletedAt == nil {
 		t.Fatalf("completed job = %+v", completed)
+	}
+	if completed.LeaseOwner != "" || completed.LeaseExpiresAt != nil {
+		t.Fatalf("completed job retained lease = %+v", completed)
 	}
 
 	var outboxEvents int

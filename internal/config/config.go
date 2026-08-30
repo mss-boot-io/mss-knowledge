@@ -71,6 +71,7 @@ type S3Config struct {
 	Endpoint          string
 	Region            string
 	Bucket            string
+	Prefix            string
 	AccessKeyID       string
 	SecretAccessKey   string
 	SessionToken      string
@@ -115,8 +116,11 @@ type SearchConfig struct {
 
 // WorkerConfig controls the durable ingestion poller.
 type WorkerConfig struct {
+	ID            string
 	PollInterval  time.Duration
 	LeaseDuration time.Duration
+	RetryBase     time.Duration
+	RetryMaximum  time.Duration
 }
 
 // LookupEnv is compatible with os.LookupEnv and makes loading deterministic in tests.
@@ -150,6 +154,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 			KeyPrefix: "mk:chunk:",
 		},
 		S3: S3Config{
+			Prefix:            "tenants",
 			PathStyle:         true,
 			RequireVersioning: true,
 		},
@@ -179,7 +184,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		},
 		Worker: WorkerConfig{
 			PollInterval:  2 * time.Second,
-			LeaseDuration: 30 * time.Second,
+			LeaseDuration: 5 * time.Minute,
+			RetryBase:     5 * time.Second,
+			RetryMaximum:  5 * time.Minute,
 		},
 		ShutdownTimeout: 15 * time.Second,
 		LogLevel:        "info",
@@ -198,6 +205,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	cfg.S3.Endpoint = stringValue(lookup, "MSS_KNOWLEDGE_S3_ENDPOINT", cfg.S3.Endpoint)
 	cfg.S3.Region = stringValue(lookup, "MSS_KNOWLEDGE_S3_REGION", cfg.S3.Region)
 	cfg.S3.Bucket = stringValue(lookup, "MSS_KNOWLEDGE_S3_BUCKET", cfg.S3.Bucket)
+	cfg.S3.Prefix = stringValue(lookup, "MSS_KNOWLEDGE_S3_PREFIX", cfg.S3.Prefix)
 	cfg.S3.AccessKeyID = stringValue(lookup, "MSS_KNOWLEDGE_S3_ACCESS_KEY_ID", cfg.S3.AccessKeyID)
 	cfg.S3.SecretAccessKey = rawStringValue(lookup, "MSS_KNOWLEDGE_S3_SECRET_ACCESS_KEY", cfg.S3.SecretAccessKey)
 	cfg.S3.SessionToken = rawStringValue(lookup, "MSS_KNOWLEDGE_S3_SESSION_TOKEN", cfg.S3.SessionToken)
@@ -212,6 +220,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	cfg.Processing.ChunkerProfileID = stringValue(lookup, "MSS_KNOWLEDGE_CHUNKER_PROFILE_ID", cfg.Processing.ChunkerProfileID)
 	cfg.Processing.EmbeddingProfileID = stringValue(lookup, "MSS_KNOWLEDGE_EMBEDDING_PROFILE_ID", cfg.Processing.EmbeddingProfileID)
 	cfg.Processing.IndexProfileID = stringValue(lookup, "MSS_KNOWLEDGE_INDEX_PROFILE_ID", cfg.Processing.IndexProfileID)
+	cfg.Worker.ID = stringValue(lookup, "MSS_KNOWLEDGE_WORKER_ID", cfg.Worker.ID)
 
 	var err error
 	if cfg.HTTP.ReadHeaderTimeout, err = durationValue(lookup, "MSS_KNOWLEDGE_HTTP_READ_HEADER_TIMEOUT", cfg.HTTP.ReadHeaderTimeout); err != nil {
@@ -233,6 +242,12 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Worker.LeaseDuration, err = durationValue(lookup, "MSS_KNOWLEDGE_WORKER_LEASE_DURATION", cfg.Worker.LeaseDuration); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.RetryBase, err = durationValue(lookup, "MSS_KNOWLEDGE_WORKER_RETRY_BASE", cfg.Worker.RetryBase); err != nil {
+		return Config{}, err
+	}
+	if cfg.Worker.RetryMaximum, err = durationValue(lookup, "MSS_KNOWLEDGE_WORKER_RETRY_MAXIMUM", cfg.Worker.RetryMaximum); err != nil {
 		return Config{}, err
 	}
 	if cfg.HTTP.MaxRequestBytes, err = int64Value(lookup, "MSS_KNOWLEDGE_HTTP_MAX_REQUEST_BYTES", cfg.HTTP.MaxRequestBytes); err != nil {
@@ -311,6 +326,8 @@ func (c Config) Validate() error {
 		"shutdown timeout":         c.ShutdownTimeout,
 		"worker poll interval":     c.Worker.PollInterval,
 		"worker lease duration":    c.Worker.LeaseDuration,
+		"worker retry base":        c.Worker.RetryBase,
+		"worker retry maximum":     c.Worker.RetryMaximum,
 	} {
 		if value <= 0 {
 			return fmt.Errorf("%s must be positive", name)
@@ -319,6 +336,12 @@ func (c Config) Validate() error {
 
 	if c.HTTP.MaxRequestBytes <= 0 {
 		return fmt.Errorf("HTTP max request bytes must be positive")
+	}
+	if c.Worker.RetryMaximum < c.Worker.RetryBase {
+		return fmt.Errorf("worker retry maximum must be greater than or equal to retry base")
+	}
+	if strings.Trim(strings.TrimSpace(c.S3.Prefix), "/") == "" {
+		return fmt.Errorf("S3 prefix must not be empty")
 	}
 	if c.Database.MaxConnections <= 0 || c.Database.MinConnections < 0 || c.Database.MinConnections > c.Database.MaxConnections {
 		return fmt.Errorf("database connection bounds are invalid")
