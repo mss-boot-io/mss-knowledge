@@ -29,6 +29,12 @@ jobs:
           ref: codex/mss-knowledge-foundation
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Apply and verify checkpoint
         shell: bash
         run: |
@@ -36,6 +42,9 @@ jobs:
           test -s .checkpoint/message.txt
           test -d .checkpoint/parts
           find .checkpoint/parts -maxdepth 1 -type f -name '*.patch' -print -quit | grep -q .
+
+          message=$(head -n 1 .checkpoint/message.txt | tr -d '\r')
+          test -n "$message"
 
           cat .checkpoint/parts/*.patch > /tmp/mss-knowledge-change.patch
           git apply --check --whitespace=error /tmp/mss-knowledge-change.patch
@@ -47,15 +56,12 @@ jobs:
             git add -- "${go_files[@]}"
           fi
 
+          go mod tidy
+          git add go.mod go.sum
+
           rm -rf .checkpoint/parts .checkpoint/message.txt .checkpoint/READY
           git add -A
           git diff --cached --check
-
-          message=$(head -n 1 .checkpoint-message.tmp 2>/dev/null || true)
-          if [[ -z "$message" ]]; then
-            message=$(head -n 1 <(git show HEAD:.checkpoint/message.txt) | tr -d '\r')
-          fi
-          test -n "$message"
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
