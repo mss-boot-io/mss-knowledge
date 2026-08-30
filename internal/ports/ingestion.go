@@ -72,6 +72,11 @@ type ChunkProfile struct {
 	ParentExpansion bool
 }
 
+// TokenCounter abstracts model-specific token accounting from chunk structure logic.
+type TokenCounter interface {
+	Count(text string) int
+}
+
 // Chunker derives retrieval chunks from a normalized document.
 type Chunker interface {
 	Chunk(ctx context.Context, document knowledge.Document, profile ChunkProfile) ([]knowledge.Chunk, error)
