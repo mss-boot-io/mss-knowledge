@@ -96,17 +96,17 @@ type EmbeddingProvider interface {
 
 // IndexedChunk combines durable chunk metadata with its derived vector.
 type IndexedChunk struct {
-	TenantID         string
-	KnowledgeBaseID  string
-	DocumentID       string
-	VersionID        string
-	IndexVersion     string
-	Chunk            knowledge.Chunk
-	Language         string
-	Title            string
-	SourceURI        string
-	UpdatedAt        time.Time
-	Embedding        []float32
+	TenantID        string
+	KnowledgeBaseID string
+	DocumentID      string
+	VersionID       string
+	IndexVersion    string
+	Chunk           knowledge.Chunk
+	Language        string
+	Title           string
+	SourceURI       string
+	UpdatedAt       time.Time
+	Embedding       []float32
 }
 
 // ChunkIndex writes and verifies version-scoped search projections.
@@ -128,12 +128,12 @@ type VersionArtifacts struct {
 
 // PublishVersionRequest is the atomic control-plane visibility switch.
 type PublishVersionRequest struct {
-	TenantID       string
+	TenantID        string
 	KnowledgeBaseID string
-	DocumentID     document.DocumentID
-	VersionID      document.VersionID
-	PublishedAt    time.Time
-	Artifacts      VersionArtifacts
+	DocumentID      document.DocumentID
+	VersionID       document.VersionID
+	PublishedAt     time.Time
+	Artifacts       VersionArtifacts
 }
 
 // DocumentRepository persists version metadata and performs publication transactions.
