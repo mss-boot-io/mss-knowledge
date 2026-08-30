@@ -15,6 +15,7 @@ type ObjectRef struct {
 	Bucket    string
 	Key       string
 	VersionID string
+	ETag      string
 	Size      int64
 	SHA256    string
 	MediaType string

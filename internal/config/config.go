@@ -26,6 +26,7 @@ type Config struct {
 	HTTP            HTTPConfig
 	Database        DatabaseConfig
 	Redis           RedisConfig
+	S3              S3Config
 	Auth            AuthConfig
 	Embedding       EmbeddingConfig
 	Search          SearchConfig
@@ -60,6 +61,18 @@ type RedisConfig struct {
 	TLS       bool
 	IndexName string
 	KeyPrefix string
+}
+
+// S3Config controls the S3-compatible immutable object store.
+type S3Config struct {
+	Endpoint          string
+	Region            string
+	Bucket            string
+	AccessKeyID       string
+	SecretAccessKey   string
+	SessionToken      string
+	PathStyle         bool
+	RequireVersioning bool
 }
 
 // AuthConfig controls the first-version bearer-token resolver.
@@ -121,6 +134,10 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 			IndexName: "mss-knowledge-chunks-v1",
 			KeyPrefix: "mk:chunk:",
 		},
+		S3: S3Config{
+			PathStyle:         true,
+			RequireVersioning: true,
+		},
 		Auth: AuthConfig{
 			Mode:   "disabled",
 			Scopes: []string{"knowledge.search", "knowledge.read"},
@@ -153,6 +170,12 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	cfg.Redis.Password = rawStringValue(lookup, "MSS_KNOWLEDGE_REDIS_PASSWORD", cfg.Redis.Password)
 	cfg.Redis.IndexName = stringValue(lookup, "MSS_KNOWLEDGE_REDIS_INDEX_NAME", cfg.Redis.IndexName)
 	cfg.Redis.KeyPrefix = stringValue(lookup, "MSS_KNOWLEDGE_REDIS_KEY_PREFIX", cfg.Redis.KeyPrefix)
+	cfg.S3.Endpoint = stringValue(lookup, "MSS_KNOWLEDGE_S3_ENDPOINT", cfg.S3.Endpoint)
+	cfg.S3.Region = stringValue(lookup, "MSS_KNOWLEDGE_S3_REGION", cfg.S3.Region)
+	cfg.S3.Bucket = stringValue(lookup, "MSS_KNOWLEDGE_S3_BUCKET", cfg.S3.Bucket)
+	cfg.S3.AccessKeyID = stringValue(lookup, "MSS_KNOWLEDGE_S3_ACCESS_KEY_ID", cfg.S3.AccessKeyID)
+	cfg.S3.SecretAccessKey = rawStringValue(lookup, "MSS_KNOWLEDGE_S3_SECRET_ACCESS_KEY", cfg.S3.SecretAccessKey)
+	cfg.S3.SessionToken = rawStringValue(lookup, "MSS_KNOWLEDGE_S3_SESSION_TOKEN", cfg.S3.SessionToken)
 	cfg.Auth.Mode = strings.ToLower(stringValue(lookup, "MSS_KNOWLEDGE_AUTH_MODE", cfg.Auth.Mode))
 	cfg.Auth.StaticToken = rawStringValue(lookup, "MSS_KNOWLEDGE_STATIC_TOKEN", cfg.Auth.StaticToken)
 	cfg.Auth.TenantID = stringValue(lookup, "MSS_KNOWLEDGE_STATIC_TENANT_ID", cfg.Auth.TenantID)
@@ -196,6 +219,12 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Redis.TLS, err = boolValue(lookup, "MSS_KNOWLEDGE_REDIS_TLS", cfg.Redis.TLS); err != nil {
+		return Config{}, err
+	}
+	if cfg.S3.PathStyle, err = boolValue(lookup, "MSS_KNOWLEDGE_S3_PATH_STYLE", cfg.S3.PathStyle); err != nil {
+		return Config{}, err
+	}
+	if cfg.S3.RequireVersioning, err = boolValue(lookup, "MSS_KNOWLEDGE_S3_REQUIRE_VERSIONING", cfg.S3.RequireVersioning); err != nil {
 		return Config{}, err
 	}
 	if cfg.Embedding.Dimension, err = intValue(lookup, "MSS_KNOWLEDGE_EMBEDDING_DIMENSION", cfg.Embedding.Dimension); err != nil {
@@ -287,6 +316,15 @@ func (c Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("unsupported log level %q", c.LogLevel)
+	}
+	return nil
+}
+
+// ValidateObjectStorage checks the S3-compatible immutable object boundary.
+func (c Config) ValidateObjectStorage() error {
+	if strings.TrimSpace(c.S3.Endpoint) == "" || strings.TrimSpace(c.S3.Bucket) == "" ||
+		strings.TrimSpace(c.S3.AccessKeyID) == "" || c.S3.SecretAccessKey == "" {
+		return fmt.Errorf("S3 endpoint, bucket, access key, and secret key are required")
 	}
 	return nil
 }

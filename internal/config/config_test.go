@@ -187,3 +187,25 @@ func TestValidateRejectsStaticAuthenticationInProduction(t *testing.T) {
 		t.Fatal("Validate() error = nil, want production static auth rejection")
 	}
 }
+
+func TestValidateObjectStorage(t *testing.T) {
+	cfg, err := FromLookup(func(key string) (string, bool) {
+		values := map[string]string{
+			"MSS_KNOWLEDGE_S3_ENDPOINT":          "http://127.0.0.1:9000",
+			"MSS_KNOWLEDGE_S3_BUCKET":            "mss-knowledge",
+			"MSS_KNOWLEDGE_S3_ACCESS_KEY_ID":     "access-key",
+			"MSS_KNOWLEDGE_S3_SECRET_ACCESS_KEY": "secret-key",
+		}
+		value, ok := values[key]
+		return value, ok
+	})
+	if err != nil {
+		t.Fatalf("FromLookup() error = %v", err)
+	}
+	if err := cfg.ValidateObjectStorage(); err != nil {
+		t.Fatalf("ValidateObjectStorage() error = %v", err)
+	}
+	if !cfg.S3.PathStyle || !cfg.S3.RequireVersioning {
+		t.Fatalf("unexpected S3 defaults: %+v", cfg.S3)
+	}
+}
