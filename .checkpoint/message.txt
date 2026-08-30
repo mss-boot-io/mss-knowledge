@@ -1,1 +1,0 @@
-test: cover processing pipeline and worker lifecycle
