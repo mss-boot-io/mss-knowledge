@@ -1,0 +1,46 @@
+name: dev-bundle
+
+on:
+  push:
+    branches:
+      - codex/mss-knowledge-foundation
+    paths:
+      - .github/workflows/dev-bundle.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Download module graph
+        run: go mod download
+
+      - name: Pack toolchain and module cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          goroot=$(go env GOROOT)
+          gomodcache=$(go env GOMODCACHE)
+          mkdir -p /tmp/mss-dev-bundle/go /tmp/mss-dev-bundle/mod
+          cp -a "$goroot"/. /tmp/mss-dev-bundle/go/
+          cp -a "$gomodcache"/. /tmp/mss-dev-bundle/mod/
+          tar -C /tmp/mss-dev-bundle -czf /tmp/mss-knowledge-dev-bundle.tar.gz go mod
+
+      - name: Upload development bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: mss-knowledge-dev-bundle-${{ github.sha }}
+          path: /tmp/mss-knowledge-dev-bundle.tar.gz
+          retention-days: 1
