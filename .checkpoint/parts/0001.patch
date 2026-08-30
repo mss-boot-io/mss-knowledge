@@ -1,17 +1,3 @@
-diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
-index 268d190..5b8b588 100644
---- a/.github/workflows/ci.yml
-+++ b/.github/workflows/ci.yml
-@@ -27,6 +27,9 @@ jobs:
-           go-version-file: go.mod
-           cache: true
- 
-+      - name: Verify Go module files
-+        run: sh scripts/verify-go-modules.sh
-+
-       - name: Check formatting
-         run: make fmt-check
- 
 diff --git a/internal/adapters/postgres/store.go b/internal/adapters/postgres/store.go
 index a0b96df..d97bb83 100644
 --- a/internal/adapters/postgres/store.go
